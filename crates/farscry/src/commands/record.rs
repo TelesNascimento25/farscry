@@ -91,15 +91,54 @@ fn run_capture_loop(opts: RecordOpts) -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
+pub fn ensure_display() -> Option<std::process::Child> {
+    if std::env::var("DISPLAY").is_ok() {
+        return None;
+    }
+    let display_num = (99u32..=199)
+        .find(|n| !std::path::Path::new(&format!("/tmp/.X{n}-lock")).exists())
+        .unwrap_or(99);
+    let display_str = format!(":{display_num}");
+    let child = std::process::Command::new("Xvfb")
+        .args([
+            &display_str,
+            "-screen",
+            "0",
+            "1920x1080x24",
+            "-nolisten",
+            "tcp",
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    std::env::set_var("DISPLAY", &display_str);
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if std::path::Path::new(&format!("/tmp/.X{display_num}-lock")).exists() {
+            eprintln!("[farscry] headless mode: Xvfb started on {display_str}");
+            return Some(child);
+        }
+    }
+    eprintln!("[farscry] warning: Xvfb may not be ready yet");
+    Some(child)
+}
+
+#[cfg(target_os = "linux")]
 fn capture_loop_linux(opts: RecordOpts) -> Result<()> {
     use scrap::{Capturer, Display};
+
+    let _xvfb = ensure_display();
 
     if let Some(parent) = opts.output.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    let display =
-        Display::primary().map_err(|e| anyhow::anyhow!("no display (is DISPLAY set?): {e}"))?;
+    let display = Display::primary().map_err(|e| {
+        anyhow::anyhow!(
+            "no display available: {e}\nSet DISPLAY=:1 or install Xvfb (apt install xvfb)"
+        )
+    })?;
     let mut capturer =
         Capturer::new(display).map_err(|e| anyhow::anyhow!("capturer init failed: {e}"))?;
     let img_w = capturer.width() as u32;
@@ -384,9 +423,9 @@ mod tests {
                 .try_send(image::DynamicImage::ImageRgba8(image::RgbaImage::new(4, 4)))
                 .is_ok());
         }
-        assert!(
-            tx.try_send(image::DynamicImage::ImageRgba8(image::RgbaImage::new(4, 4)))
-                .is_err());
+        assert!(tx
+            .try_send(image::DynamicImage::ImageRgba8(image::RgbaImage::new(4, 4)))
+            .is_err());
         drop(rx);
     }
 
@@ -420,9 +459,7 @@ mod tests {
 
         let rss_after = rss_kib();
         let delta_kib = rss_after.saturating_sub(rss_before);
-        assert!(
-            delta_kib < 128 * 1024,
-        );
+        assert!(delta_kib < 128 * 1024,);
 
         if let Ok(mut w) = writer.lock() {
             w.finalize().ok();

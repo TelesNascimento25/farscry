@@ -163,8 +163,7 @@ mod tests {
 
         assert!(appeared_count > 0);
 
-        assert_eq!(
-            changed_count, 0);
+        assert_eq!(changed_count, 0);
     }
 
     #[test]
@@ -201,11 +200,9 @@ mod tests {
             .filter(|e| matches!(e, DeltaEntry::Unchanged(_)))
             .count();
 
-        assert!(
-            changed_count >= 1);
+        assert!(changed_count >= 1);
 
-        assert!(
-            unchanged_count >= 3);
+        assert!(unchanged_count >= 3);
     }
 
     #[test]
@@ -302,8 +299,7 @@ mod tests {
         let saved = compute_tokens_saved(Some((1920, 1080)), Some((1920, 1080)));
         assert!(saved.is_some());
         let saved = saved.unwrap();
-        assert!(
-            saved > 5000);
+        assert!(saved > 5000);
 
         let small = compute_tokens_saved(Some((640, 480)), None);
         assert!(small.is_some());

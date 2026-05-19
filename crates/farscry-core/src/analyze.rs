@@ -312,11 +312,7 @@ mod tests {
 
     #[test]
     fn test_no_silent_failure_without_action_markers() {
-        let path = tmp_vasf(
-            "no_sf_no_markers",
-            vec![make_frame(1, "error", "stuck")],
-            5,
-        );
+        let path = tmp_vasf("no_sf_no_markers", vec![make_frame(1, "error", "stuck")], 5);
         let paths: Vec<&Path> = vec![path.as_path()];
         let result = analyze_sessions(&paths, None).unwrap();
         assert_eq!(result.silent_failure_sessions, 0);

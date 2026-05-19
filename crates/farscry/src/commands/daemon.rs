@@ -31,6 +31,9 @@ struct WindowEntry {
 type SharedState = Arc<Mutex<HashMap<u32, WindowEntry>>>;
 
 pub fn run_daemon() -> Result<()> {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _xvfb = crate::commands::record::ensure_display();
+
     let pid_path = pid_path();
     let sock_path = sock_path();
 

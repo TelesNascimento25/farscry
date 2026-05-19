@@ -192,8 +192,7 @@ mod tests {
         let hash_orig = phash_image(&original);
         let hash_shifted = phash_image(&shifted_img);
 
-        assert_eq!(
-            hash_orig, hash_shifted);
+        assert_eq!(hash_orig, hash_shifted);
     }
 
     #[test]
@@ -214,7 +213,6 @@ mod tests {
         let hash_base = phash_image(&base);
         let hash_banner = phash_image(&modified);
 
-        assert_ne!(
-            hash_base, hash_banner);
+        assert_ne!(hash_base, hash_banner);
     }
 }

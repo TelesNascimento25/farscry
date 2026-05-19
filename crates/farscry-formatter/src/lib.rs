@@ -275,10 +275,8 @@ mod tests {
 
         let formatted = VaspFormatter::format_vasp(&output, "test.png", 1920, 1080);
 
-        assert!(
-            formatted.contains("affordances:"));
-        assert!(
-            formatted.contains("click ->"));
+        assert!(formatted.contains("affordances:"));
+        assert!(formatted.contains("click ->"));
     }
 
     #[test]
@@ -294,8 +292,7 @@ mod tests {
         let formatted =
             VaspFormatter::format_vasp_with_options(&output, "test.png", 1920, 1080, false);
 
-        assert!(
-            !formatted.contains("affordances:"));
+        assert!(!formatted.contains("affordances:"));
 
         assert!(formatted.contains("Save"));
     }

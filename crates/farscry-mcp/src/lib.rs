@@ -231,8 +231,7 @@ mod tests {
         });
 
         let response = server.dispatch(&msg).await;
-        assert!(
-            response.is_none());
+        assert!(response.is_none());
     }
 
     #[tokio::test]
@@ -260,10 +259,8 @@ mod tests {
         assert!(tool_names.contains(&"farscry_diff"));
 
         for tool in tools_arr {
-            assert!(
-                tool["inputSchema"].is_object());
-            assert!(
-                tool["description"].is_string());
+            assert!(tool["inputSchema"].is_object());
+            assert!(tool["description"].is_string());
         }
     }
 

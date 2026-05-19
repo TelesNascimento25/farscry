@@ -216,9 +216,7 @@ mod tests {
         }];
 
         let result = detect_screen_type(&regions);
-        assert_ne!(
-            result,
-            ScreenType::Terminal);
+        assert_ne!(result, ScreenType::Terminal);
 
         assert_eq!(result, ScreenType::Error);
     }

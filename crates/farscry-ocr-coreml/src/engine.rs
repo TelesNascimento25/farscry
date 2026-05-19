@@ -576,14 +576,12 @@ mod tests {
             );
         }
 
-        assert!(
-            !result.regions.is_empty());
+        assert!(!result.regions.is_empty());
         assert!(result.width > 0);
         assert!(result.height > 0);
 
         for region in &result.regions {
-            assert!(
-                !region.text.trim().is_empty());
+            assert!(!region.text.trim().is_empty());
         }
 
         eprintln!("\n=== CoreML Integration Test PASSED ===");

@@ -451,10 +451,8 @@ mod tests {
         w.append_timeline(2000, state_id).unwrap();
 
         let vasf = VasfFile::read_from(&path).unwrap();
-        assert_eq!(
-            vasf.header.frame_count, 1);
-        assert_eq!(
-            vasf.header.total_input, 2);
+        assert_eq!(vasf.header.frame_count, 1);
+        assert_eq!(vasf.header.total_input, 2);
         assert_eq!(vasf.frames.len(), 1);
         let _ = std::fs::remove_file(&path);
     }

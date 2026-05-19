@@ -216,10 +216,7 @@ mod integration {
 
     fn build_pipeline() -> Pipeline {
         let models_dir = repo_root().join("spike").join("models");
-        assert!(
-            models_dir.exists(),
-            models_dir.display()
-        );
+        assert!(models_dir.exists(), models_dir.display());
 
         let ocr = OrtOcrEngine::new(&models_dir).expect("Failed to load OCR engine");
         Pipeline::new(
@@ -235,10 +232,7 @@ mod integration {
     #[test]
     fn test_real_pipeline_extract() {
         let test_image_path = repo_root().join("spike").join("test.png");
-        assert!(
-            test_image_path.exists(),
-            test_image_path.display()
-        );
+        assert!(test_image_path.exists(), test_image_path.display());
 
         let pipeline = build_pipeline();
 
@@ -249,17 +243,11 @@ mod integration {
             result.state_id.to_string().starts_with("phash:"),
             result.state_id
         );
-        assert_eq!(
-            result.state_id.to_string().len(),
-            22);
+        assert_eq!(result.state_id.to_string().len(), 22);
 
-        assert!(
-            !result.agent_context.is_empty());
+        assert!(!result.agent_context.is_empty());
 
-        assert!(
-            result.ui_tree.len() >= 20,
-            result.ui_tree.len()
-        );
+        assert!(result.ui_tree.len() >= 20, result.ui_tree.len());
 
         eprintln!(
             "[integration] PASS - {} UI elements, state_id={}, agent_context=\"{}\"",
@@ -297,15 +285,13 @@ mod integration {
         let vasp1 = pipeline.process(img1).expect("Pipeline failed on img1");
         let vasp2 = pipeline.process(img2).expect("Pipeline failed on img2");
 
-        assert_ne!(
-            vasp1.state_id, vasp2.state_id);
+        assert_ne!(vasp1.state_id, vasp2.state_id);
 
         let diff_engine = farscry_diff::DiffEngineImpl;
         use farscry_core::DiffEngine;
         let delta = diff_engine.diff(&vasp1, &vasp2, None, None);
 
-        assert!(
-            delta.vasp_version == "1.0");
+        assert!(delta.vasp_version == "1.0");
         eprintln!(
             "[integration] Diff PASS - context_similarity={:.3}, {} delta entries",
             delta.context_similarity,

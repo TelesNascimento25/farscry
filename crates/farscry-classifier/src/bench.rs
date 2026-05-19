@@ -34,8 +34,7 @@ fn benchmark_20_elements() {
     println!("Classification time for 20 elements: {:?}", elapsed);
     println!("Elements classified: {}", elements.len());
 
-    assert!(
-        elapsed.as_millis() < 2);
+    assert!(elapsed.as_millis() < 2);
 }
 
 #[test]
