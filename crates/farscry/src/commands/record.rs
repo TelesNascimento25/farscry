@@ -358,6 +358,7 @@ fn capture_screen(window_pid: Option<u32>) -> Option<image::DynamicImage> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_os = "linux"))]
     use super::*;
     use crossbeam_channel::bounded;
 
