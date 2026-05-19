@@ -392,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(all(unix, not(target_os = "linux")))]
     fn test_rss_bounded_after_60_frame_simulation() {
         let rss_before = rss_kib();
 
