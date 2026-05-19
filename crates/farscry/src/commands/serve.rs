@@ -149,13 +149,13 @@ impl SessionRecorder {
         })
     }
 
-    fn record(&mut self, vasp: &VaspOutput, image_path: &str) {
+    fn record(&mut self, vasp: &VaspOutput, image_path: &str, force: bool) {
         self.writer.total_input += 1;
         let is_new = self
             .last_state_id
             .map(|last| vasp.state_id.hamming(last) > self.hamming_threshold)
             .unwrap_or(true);
-        if !is_new {
+        if !is_new && !force {
             return;
         }
         let (w, h) = image::image_dimensions(image_path).unwrap_or((1920, 1080));
@@ -215,7 +215,7 @@ impl farscry_mcp::PipelineOps for RecordingAdapter {
         let output = self.pipeline.process(img).map_err(|e| e.to_string())?;
         if let Ok(mut guard) = self.recorder.lock() {
             if let Some(rec) = guard.as_mut() {
-                rec.record(&output, image_path);
+                rec.record(&output, image_path, after_action);
             }
         }
         Ok(output)
