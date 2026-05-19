@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
+#[cfg(target_os = "macos")]
 use image::GenericImageView;
-use std::path::PathBuf;
 
 pub fn paste(agent_override: Option<&str>, prompt_override: Option<&str>) -> Result<()> {
     let cfg = crate::config::read_farscry_config();
@@ -38,7 +38,7 @@ fn capture_clipboard_vasp() -> Result<String> {
     #[cfg(target_os = "macos")]
     {
         let (image_data, _) = crate::clipboard::macos::read_clipboard_image_macos()?;
-        let temp_path = PathBuf::from("/tmp/farscry_paste.png");
+        let temp_path = std::env::temp_dir().join("farscry_paste.png");
         std::fs::write(&temp_path, image_data)?;
         let output = crate::pipeline::process_image(&temp_path, 50_000_000)?;
         let (w, h) = image::open(&temp_path)
