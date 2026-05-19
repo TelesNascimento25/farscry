@@ -4,7 +4,6 @@ use farscry_core::{DiffEngine, StateId};
 use farscry_diff::DiffEngineImpl;
 use std::path::{Path, PathBuf};
 
-
 pub fn pack_frames(input: PathBuf, output: PathBuf, hamming_threshold: u8) -> Result<()> {
     let paths = collect_image_paths(&input)?;
     let total = paths.len();

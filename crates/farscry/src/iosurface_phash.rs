@@ -1,4 +1,3 @@
-
 #![cfg(target_os = "macos")]
 
 use farscry_core::StateId;
@@ -6,7 +5,6 @@ use std::os::raw::c_void;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-
 
 extern "C" {
     fn farscry_stream_start(
@@ -20,7 +18,6 @@ extern "C" {
 
     fn farscry_stream_stop(handle: *mut c_void);
 }
-
 
 /// A CGDisplayStream that delivers the primary display at 32×32 to a callback.
 /// Frames are rate-limited to `fps_limit` per second by the ObjC layer.
@@ -48,16 +45,8 @@ impl DisplayStream {
         });
         let ctx_ptr = &*ctx as *const StreamCtx as *mut c_void;
 
-        let handle = unsafe {
-            farscry_stream_start(
-                0,
-                32,
-                32,
-                fps_limit.max(1),
-                frame_callback,
-                ctx_ptr,
-            )
-        };
+        let handle =
+            unsafe { farscry_stream_start(0, 32, 32, fps_limit.max(1), frame_callback, ctx_ptr) };
 
         if handle.is_null() {
             return None;
@@ -128,10 +117,9 @@ fn sample_and_phash(pixels: &[u8], w: usize, h: usize, bpr: usize) -> StateId {
     farscry_core::phash_image(&luma)
 }
 
-
 use core_graphics::window::{
-    copy_window_info, kCGNullWindowID, kCGWindowListExcludeDesktopElements,
-    kCGWindowListOptionAll, kCGWindowNumber, kCGWindowOwnerPID, CGWindowID,
+    copy_window_info, kCGNullWindowID, kCGWindowListExcludeDesktopElements, kCGWindowListOptionAll,
+    kCGWindowNumber, kCGWindowOwnerPID, CGWindowID,
 };
 
 /// Walk the ancestor process tree from `start_pid` and return the first PID
@@ -166,8 +154,7 @@ fn window_for_pid(target_pid: u32) -> Option<CGWindowID> {
 
     for raw in wins.get_all_values() {
         unsafe {
-            let pid_cf =
-                CFDictionaryGetValue(raw, kCGWindowOwnerPID as *const c_void);
+            let pid_cf = CFDictionaryGetValue(raw, kCGWindowOwnerPID as *const c_void);
             if pid_cf.is_null() {
                 continue;
             }
@@ -203,7 +190,6 @@ pub fn ppid(pid: u32) -> Option<u32> {
         .parse::<u32>()
         .ok()
 }
-
 
 pub fn daemon_pid_file() -> PathBuf {
     dirs::home_dir()

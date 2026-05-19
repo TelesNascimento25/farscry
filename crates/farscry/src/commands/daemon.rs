@@ -20,7 +20,6 @@ use crate::iosurface_phash::DisplayStream;
 #[cfg(all(unix, not(target_os = "macos")))]
 use libc;
 
-
 struct WindowEntry {
     #[allow(dead_code)]
     shell_pid: u32,
@@ -30,7 +29,6 @@ struct WindowEntry {
 }
 
 type SharedState = Arc<Mutex<HashMap<u32, WindowEntry>>>;
-
 
 /// Start the global daemon.  Fails immediately if another daemon instance is
 /// detected (PID file exists and process is alive).
@@ -78,8 +76,8 @@ pub fn connect_and_register(shell_pid: u32) -> Result<()> {
     ensure_daemon_running()?;
 
     let sock_path = sock_path();
-    let mut stream = UnixStream::connect(&sock_path)
-        .context("could not connect to farscry daemon")?;
+    let mut stream =
+        UnixStream::connect(&sock_path).context("could not connect to farscry daemon")?;
 
     let msg = format!("REGISTER {shell_pid}\n");
     stream.write_all(msg.as_bytes())?;
@@ -107,7 +105,6 @@ pub fn unregister(shell_pid: u32) -> Result<()> {
     stream.write_all(msg.as_bytes()).ok();
     Ok(())
 }
-
 
 fn handle_client(stream: UnixStream, state: SharedState) -> Result<()> {
     let mut writer = stream.try_clone()?;
@@ -166,7 +163,10 @@ fn register(shell_pid: u32, state: &SharedState) -> Result<(u32, PathBuf)> {
     };
 
     state.lock().unwrap().insert(shell_pid, entry);
-    eprintln!("[farscry:daemon] registered pid={shell_pid} window_hint={window_id} → {}", file.display());
+    eprintln!(
+        "[farscry:daemon] registered pid={shell_pid} window_hint={window_id} → {}",
+        file.display()
+    );
     Ok((window_id, file))
 }
 
@@ -179,7 +179,6 @@ fn drop_window(shell_pid: u32, state: &SharedState) {
         );
     }
 }
-
 
 fn capture_loop(state: SharedState) {
     let threshold: u8 = 10;
@@ -231,17 +230,22 @@ fn capture_loop(state: SharedState) {
     }
 }
 
-
 fn evict_stale_daemon(pid_path: &PathBuf, sock_path: &PathBuf) {
     if let Ok(s) = std::fs::read_to_string(pid_path) {
         let pid: u32 = s.trim().parse().unwrap_or(0);
         let alive = {
             #[cfg(target_os = "macos")]
-            { ios::process_alive(pid) }
+            {
+                ios::process_alive(pid)
+            }
             #[cfg(all(unix, not(target_os = "macos")))]
-            { pid > 0 && unsafe { libc::kill(pid as libc::pid_t, 0) == 0 } }
+            {
+                pid > 0 && unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+            }
             #[cfg(not(unix))]
-            { pid > 0 }
+            {
+                pid > 0
+            }
         };
         if !alive {
             let _ = std::fs::remove_file(sock_path);
@@ -252,16 +256,30 @@ fn evict_stale_daemon(pid_path: &PathBuf, sock_path: &PathBuf) {
 
 fn sock_path() -> PathBuf {
     #[cfg(target_os = "macos")]
-    { ios::daemon_sock_file() }
+    {
+        ios::daemon_sock_file()
+    }
     #[cfg(not(target_os = "macos"))]
-    { dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")).join(".farscry").join("daemon.sock") }
+    {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".farscry")
+            .join("daemon.sock")
+    }
 }
 
 fn pid_path() -> PathBuf {
     #[cfg(target_os = "macos")]
-    { ios::daemon_pid_file() }
+    {
+        ios::daemon_pid_file()
+    }
     #[cfg(not(target_os = "macos"))]
-    { dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")).join(".farscry").join("daemon.pid") }
+    {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".farscry")
+            .join("daemon.pid")
+    }
 }
 
 fn ensure_daemon_running() -> Result<()> {

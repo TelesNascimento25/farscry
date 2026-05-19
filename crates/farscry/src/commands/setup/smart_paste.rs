@@ -1,12 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use super::terminal::{
-    TerminalResult,
-    configure_alacritty,
-    configure_kitty,
-    restore_backup,
-};
+use super::terminal::{configure_alacritty, configure_kitty, restore_backup, TerminalResult};
 
 fn write_smart_paste_script(farscry_dir: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(farscry_dir)?;
@@ -92,8 +87,10 @@ pub fn setup_smart_paste(home: &Path) -> Result<()> {
     {
         let iterm2 = Path::new("/Applications/iTerm.app").exists();
         let warp = Path::new("/Applications/Warp.app").exists();
-        let kitty = super::wizard::agent_in_path("kitty") || home.join(".config/kitty/kitty.conf").exists();
-        let alac = Path::new("/Applications/Alacritty.app").exists() || super::wizard::agent_in_path("alacritty");
+        let kitty =
+            super::wizard::agent_in_path("kitty") || home.join(".config/kitty/kitty.conf").exists();
+        let alac = Path::new("/Applications/Alacritty.app").exists()
+            || super::wizard::agent_in_path("alacritty");
         detected.push(("iTerm2", iterm2));
         detected.push(("Warp", warp));
         detected.push(("Kitty", kitty));
@@ -104,7 +101,10 @@ pub fn setup_smart_paste(home: &Path) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         detected.push(("Kitty", super::wizard::agent_in_path("kitty")));
-        detected.push(("Gnome Terminal", super::wizard::agent_in_path("gnome-terminal")));
+        detected.push((
+            "Gnome Terminal",
+            super::wizard::agent_in_path("gnome-terminal"),
+        ));
         detected.push(("Alacritty", super::wizard::agent_in_path("alacritty")));
         detected.push(("Konsole", super::wizard::agent_in_path("konsole")));
         detected.push(("Tilix", super::wizard::agent_in_path("tilix")));

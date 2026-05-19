@@ -24,7 +24,7 @@ pub fn phash_image(image: &DynamicImage) -> StateId {
 pub fn phash_from_bgra(data: &[u8], w: u32, h: u32) -> StateId {
     let wu = w as usize;
     let hu = h as usize;
-    let bpr = if hu > 0 { data.len() / hu } else { wu * 4 };
+    let bpr = data.len().checked_div(hu).unwrap_or(wu * 4);
 
     let mut gray_bytes = vec![0u8; 1024];
     for row in 0..32usize {

@@ -292,7 +292,11 @@ impl VasfWriter {
         self.update_header_in_place()
     }
 
-    pub fn append_timeline(&mut self, _timestamp_ms: i64, _state_id: StateId) -> std::io::Result<()> {
+    pub fn append_timeline(
+        &mut self,
+        _timestamp_ms: i64,
+        _state_id: StateId,
+    ) -> std::io::Result<()> {
         self.total_input = self.total_input.saturating_add(1);
         self.update_header_in_place()
     }
@@ -326,7 +330,7 @@ mod tests {
             delta_data: Some(b"=== farscry diff ===\n".to_vec()),
         };
         let vasf = VasfFile::new(vec![frame], 10);
-        let path = std::path::PathBuf::from("/tmp/_test_vasf_v2.vasf");
+        let path = std::env::temp_dir().join("_test_vasf_v2.vasf");
         vasf.write_to(&path).unwrap();
         let loaded = VasfFile::read_from(&path).unwrap();
         assert_eq!(loaded.frames.len(), 1);
@@ -388,7 +392,7 @@ mod tests {
 
     #[test]
     fn test_vasf_writer_dedup_stats() {
-        let path = std::path::PathBuf::from("/tmp/_test_vasf_writer_dedup.vasf");
+        let path = std::env::temp_dir().join("_test_vasf_writer_dedup.vasf");
         let mut w = VasfWriter::create(&path).unwrap();
         let state_id = StateId::from_bits(0xABCDEF01_23456789);
         w.append_state(state_id, "screen_type: terminal\nagent_context: \"test\"\n")
@@ -411,7 +415,7 @@ mod tests {
 
     #[test]
     fn test_vasf_writer_crash_safe() {
-        let path = std::path::PathBuf::from("/tmp/_test_vasf_writer_crash.vasf");
+        let path = std::env::temp_dir().join("_test_vasf_writer_crash.vasf");
         let mut w = VasfWriter::create(&path).unwrap();
         let state_id = StateId::from_bits(0x1122334455667788);
         w.append_state(state_id, "screen_type: terminal\n").unwrap();
@@ -419,8 +423,14 @@ mod tests {
         w.append_timeline(2000, state_id).unwrap();
 
         let vasf = VasfFile::read_from(&path).unwrap();
-        assert_eq!(vasf.header.frame_count, 1, "frame_count must be live without finalize");
-        assert_eq!(vasf.header.total_input, 2, "total_input must be live without finalize");
+        assert_eq!(
+            vasf.header.frame_count, 1,
+            "frame_count must be live without finalize"
+        );
+        assert_eq!(
+            vasf.header.total_input, 2,
+            "total_input must be live without finalize"
+        );
         assert_eq!(vasf.frames.len(), 1);
         let _ = std::fs::remove_file(&path);
     }

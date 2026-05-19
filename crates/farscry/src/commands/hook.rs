@@ -45,8 +45,7 @@ fn check_screen_capture_permission() {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn check_screen_capture_permission() {
-}
+fn check_screen_capture_permission() {}
 
 const HOOK_SCRIPT: &str = r#"_farscry_session_start() {
   local session_file
@@ -83,8 +82,7 @@ pub fn setup_hook() -> Result<()> {
     }
 
     let backup = rc.with_extension("bak");
-    std::fs::copy(&rc, &backup)
-        .with_context(|| format!("cannot back up {}", rc.display()))?;
+    std::fs::copy(&rc, &backup).with_context(|| format!("cannot back up {}", rc.display()))?;
 
     let mut new_content = content;
     if !new_content.ends_with('\n') {
@@ -141,5 +139,3 @@ fn detect_rc_file() -> Result<PathBuf> {
     }
     Ok(rc)
 }
-
-

@@ -230,7 +230,10 @@ async fn main() {
             hamming_threshold,
         } => commands::serve::serve_mcp(mcp, port, record, hamming_threshold).await,
         Commands::InstallLang { lang } => commands::install::install_lang(lang),
-        Commands::Setup { undo_smart_paste, hook } => {
+        Commands::Setup {
+            undo_smart_paste,
+            hook,
+        } => {
             if hook {
                 commands::hook::setup_hook()
             } else if undo_smart_paste {
