@@ -312,8 +312,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/teles-forge/homebrew-farscry.git
+          git clone https://github.com/teles-forge/homebrew-farscry.git
           cd homebrew-farscry
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/teles-forge/homebrew-farscry.git"
           VERSION="${GITHUB_REF_NAME#v}"
           sed -i "s/version \".*\"/version \"$VERSION\"/" Formula/farscry.rb
           sed -i "s/PLACEHOLDER_ARM64/${{ env.ARM_SHA }}/" Formula/farscry.rb

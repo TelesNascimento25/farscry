@@ -25,8 +25,17 @@ pip/*.egg-info/
 .env
 .env.local
 spike/target/
+spike/semantic_annotations/
 benchmarks/screenshots/
 benchmarks/screenspot-pro/
 *.zip
 .devin/
 docs/internal/
+
+# private keys
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
