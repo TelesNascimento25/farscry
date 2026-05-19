@@ -17,8 +17,6 @@ pub struct RecordOpts {
     #[allow(dead_code)]
     pub silent: bool,
     pub window_pid: Option<u32>,
-    /// When true: delegate to the single global daemon instead of
-    /// spawning a private daemon.  The `shell_pid` identifies this terminal.
     pub global: bool,
     pub shell_pid: Option<u32>,
 }
@@ -92,14 +90,6 @@ fn run_capture_loop(opts: RecordOpts) -> Result<()> {
     capture_loop_default(opts)
 }
 
-/// Linux-specific capture loop.
-///
-/// scrap::Capturer::frame() returns a slice into X11 XSHm shared memory.
-/// We sample 32×32 pixels directly from that slice via phash_from_bgra,
-/// then drop the frame reference.  No large heap allocation occurs:
-///   - X11 shared memory: not in Rust heap, not in process RSS
-///   - phash_from_bgra: ~1 KB gray + ~20 KB DCT, freed immediately
-///     Steady-state RSS: process baseline only (~7 MB).
 #[cfg(target_os = "linux")]
 fn capture_loop_linux(opts: RecordOpts) -> Result<()> {
     use scrap::{Capturer, Display};
@@ -167,7 +157,6 @@ fn capture_loop_linux(opts: RecordOpts) -> Result<()> {
     Ok(())
 }
 
-/// Default capture loop (macOS + Windows): full pipeline with OCR.
 #[cfg(not(target_os = "linux"))]
 fn capture_loop_default(opts: RecordOpts) -> Result<()> {
     if let Some(parent) = opts.output.parent() {
