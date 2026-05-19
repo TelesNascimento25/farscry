@@ -218,7 +218,6 @@ mod integration {
         let models_dir = repo_root().join("spike").join("models");
         assert!(
             models_dir.exists(),
-            "Integration test requires spike/models/ - not found at {}",
             models_dir.display()
         );
 
@@ -238,7 +237,6 @@ mod integration {
         let test_image_path = repo_root().join("spike").join("test.png");
         assert!(
             test_image_path.exists(),
-            "Integration test requires spike/test.png - not found at {}",
             test_image_path.display()
         );
 
@@ -249,24 +247,17 @@ mod integration {
 
         assert!(
             result.state_id.to_string().starts_with("phash:"),
-            "state_id must start with 'phash:' - got: {}",
             result.state_id
         );
         assert_eq!(
             result.state_id.to_string().len(),
-            22,
-            "state_id must be 'phash:' + 16 hex chars"
-        );
+            22);
 
         assert!(
-            !result.agent_context.is_empty(),
-            "agent_context must not be empty"
-        );
+            !result.agent_context.is_empty());
 
         assert!(
             result.ui_tree.len() >= 20,
-            "Expected >= 20 UI elements from spike/test.png, got {} - \
-             check model files and OCR accuracy",
             result.ui_tree.len()
         );
 
@@ -307,18 +298,14 @@ mod integration {
         let vasp2 = pipeline.process(img2).expect("Pipeline failed on img2");
 
         assert_ne!(
-            vasp1.state_id, vasp2.state_id,
-            "Different images should have different state_ids"
-        );
+            vasp1.state_id, vasp2.state_id);
 
         let diff_engine = farscry_diff::DiffEngineImpl;
         use farscry_core::DiffEngine;
         let delta = diff_engine.diff(&vasp1, &vasp2, None, None);
 
         assert!(
-            delta.vasp_version == "1.0",
-            "VaspDelta version must be '1.0'"
-        );
+            delta.vasp_version == "1.0");
         eprintln!(
             "[integration] Diff PASS - context_similarity={:.3}, {} delta entries",
             delta.context_similarity,
@@ -448,8 +435,8 @@ mod tests {
         eprintln!("Warm min: {}ms", warm_min.as_millis());
         eprintln!("Warm max: {}ms", warm_max.as_millis());
 
-        assert!(!timings[0].is_zero(), "Should have taken some time");
-        assert!(warm_avg.as_millis() > 0, "Warm average should be positive");
+        assert!(!timings[0].is_zero());
+        assert!(warm_avg.as_millis() > 0);
 
         let cold_target = Duration::from_millis(400);
         let warm_target = Duration::from_millis(320);

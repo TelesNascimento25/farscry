@@ -164,9 +164,7 @@ mod tests {
         assert!(appeared_count > 0);
 
         assert_eq!(
-            changed_count, 0,
-            "Scroll should not produce false Changed entries"
-        );
+            changed_count, 0);
     }
 
     #[test]
@@ -204,14 +202,10 @@ mod tests {
             .count();
 
         assert!(
-            changed_count >= 1,
-            "At least 1 Changed entry expected for the filled input"
-        );
+            changed_count >= 1);
 
         assert!(
-            unchanged_count >= 3,
-            "At least 3 Unchanged entries expected"
-        );
+            unchanged_count >= 3);
     }
 
     #[test]
@@ -309,15 +303,13 @@ mod tests {
         assert!(saved.is_some());
         let saved = saved.unwrap();
         assert!(
-            saved > 5000,
-            "1080p pair should save >5000 tokens, got {saved}"
-        );
+            saved > 5000);
 
         let small = compute_tokens_saved(Some((640, 480)), None);
-        assert!(small.is_some(), "one dim present should still yield Some");
+        assert!(small.is_some());
 
         let tiny = compute_tokens_saved(Some((100, 100)), None);
-        assert_eq!(tiny, Some(0), "small image savings saturate at 0");
+        assert_eq!(tiny, Some(0));
     }
 
     #[test]

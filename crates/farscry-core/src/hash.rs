@@ -193,9 +193,7 @@ mod tests {
         let hash_shifted = phash_image(&shifted_img);
 
         assert_eq!(
-            hash_orig, hash_shifted,
-            "pHash should be identical after a 1px shift (perceptual stability)"
-        );
+            hash_orig, hash_shifted);
     }
 
     #[test]
@@ -217,8 +215,6 @@ mod tests {
         let hash_banner = phash_image(&modified);
 
         assert_ne!(
-            hash_base, hash_banner,
-            "pHash must differ after a significant visual change (error banner)"
-        );
+            hash_base, hash_banner);
     }
 }

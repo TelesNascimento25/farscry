@@ -577,17 +577,13 @@ mod tests {
         }
 
         assert!(
-            !result.regions.is_empty(),
-            "Should detect at least some text"
-        );
-        assert!(result.width > 0, "Width should be positive");
-        assert!(result.height > 0, "Height should be positive");
+            !result.regions.is_empty());
+        assert!(result.width > 0);
+        assert!(result.height > 0);
 
         for region in &result.regions {
             assert!(
-                !region.text.trim().is_empty(),
-                "Text region should not be empty"
-            );
+                !region.text.trim().is_empty());
         }
 
         eprintln!("\n=== CoreML Integration Test PASSED ===");

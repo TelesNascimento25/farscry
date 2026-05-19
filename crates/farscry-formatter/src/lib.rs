@@ -276,13 +276,9 @@ mod tests {
         let formatted = VaspFormatter::format_vasp(&output, "test.png", 1920, 1080);
 
         assert!(
-            formatted.contains("affordances:"),
-            "affordances section must appear by default"
-        );
+            formatted.contains("affordances:"));
         assert!(
-            formatted.contains("click ->"),
-            "click affordance must appear"
-        );
+            formatted.contains("click ->"));
     }
 
     #[test]
@@ -299,11 +295,9 @@ mod tests {
             VaspFormatter::format_vasp_with_options(&output, "test.png", 1920, 1080, false);
 
         assert!(
-            !formatted.contains("affordances:"),
-            "affordances must be absent when show_affordances=false"
-        );
+            !formatted.contains("affordances:"));
 
-        assert!(formatted.contains("Save"), "element text must still appear");
+        assert!(formatted.contains("Save"));
     }
 
     #[test]

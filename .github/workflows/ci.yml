@@ -25,6 +25,61 @@ jobs:
             exit 1
           fi
 
+      - name: Reject #[doc] attributes and assert messages
+        run: |
+          python3 << 'PYEOF'
+          import re, sys, pathlib
+
+          def parse_call_args(text, start):
+              args, cur, depth, in_str, esc = [], [], 0, False, False
+              i = start
+              while i < len(text):
+                  c = text[i]
+                  if esc:
+                      cur.append(c); esc = False
+                  elif c == '\\' and in_str:
+                      cur.append(c); esc = True
+                  elif c == '"':
+                      cur.append(c); in_str = not in_str
+                  elif in_str:
+                      cur.append(c)
+                  elif c in '([{':
+                      depth += 1; cur.append(c)
+                  elif c in ')]}':
+                      if depth == 0:
+                          break
+                      depth -= 1; cur.append(c)
+                  elif c == ',' and depth == 0:
+                      args.append(''.join(cur).strip()); cur = []
+                  else:
+                      cur.append(c)
+                  i += 1
+              if cur:
+                  args.append(''.join(cur).strip())
+              return args
+
+          issues = []
+          for path in sorted(pathlib.Path("crates").rglob("*.rs")):
+              text = path.read_text(errors="ignore")
+              for m in re.finditer(r'#\[doc\s*=', text):
+                  line = text[:m.start()].count('\n') + 1
+                  issues.append(f"{path}:{line}: #[doc = ...] attribute")
+              for m in re.finditer(r'assert(_eq|_ne)?!\s*\(', text):
+                  args = parse_call_args(text, m.end())
+                  is_eq_ne = '_eq' in m.group() or '_ne' in m.group()
+                  msg_idx = 2 if is_eq_ne else 1
+                  if len(args) > msg_idx:
+                      msg = args[msg_idx]
+                      if msg.startswith('"') and ' ' in msg:
+                          line = text[:m.start()].count('\n') + 1
+                          issues.append(f"{path}:{line}: {m.group().strip()} with message {msg[:50]}")
+
+          if issues:
+              for i in issues:
+                  print(f"BLOCKED: {i}")
+              sys.exit(1)
+          PYEOF
+
   audit:
     name: Security audit (cargo audit)
     runs-on: ubuntu-latest

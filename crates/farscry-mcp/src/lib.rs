@@ -232,9 +232,7 @@ mod tests {
 
         let response = server.dispatch(&msg).await;
         assert!(
-            response.is_none(),
-            "notifications must not produce a response"
-        );
+            response.is_none());
     }
 
     #[tokio::test]
@@ -263,13 +261,9 @@ mod tests {
 
         for tool in tools_arr {
             assert!(
-                tool["inputSchema"].is_object(),
-                "tool must have inputSchema"
-            );
+                tool["inputSchema"].is_object());
             assert!(
-                tool["description"].is_string(),
-                "tool must have description"
-            );
+                tool["description"].is_string());
         }
     }
 

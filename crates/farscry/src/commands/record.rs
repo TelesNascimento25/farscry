@@ -386,9 +386,7 @@ mod tests {
         }
         assert!(
             tx.try_send(image::DynamicImage::ImageRgba8(image::RgbaImage::new(4, 4)))
-                .is_err(),
-            "must drop frame when full, never block"
-        );
+                .is_err());
         drop(rx);
     }
 
@@ -424,7 +422,6 @@ mod tests {
         let delta_kib = rss_after.saturating_sub(rss_before);
         assert!(
             delta_kib < 128 * 1024,
-            "RSS grew {delta_kib}KiB after 60-frame simulation (limit: 128MiB)",
         );
 
         if let Ok(mut w) = writer.lock() {

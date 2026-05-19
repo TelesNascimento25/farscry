@@ -319,7 +319,7 @@ mod tests {
         );
         let paths: Vec<&Path> = vec![path.as_path()];
         let result = analyze_sessions(&paths, None).unwrap();
-        assert_eq!(result.silent_failure_sessions, 0, "sessions without action markers cannot report silent failures");
+        assert_eq!(result.silent_failure_sessions, 0);
         let _ = std::fs::remove_file(&path);
     }
 
@@ -335,7 +335,7 @@ mod tests {
 
         let paths: Vec<&Path> = vec![path.as_path()];
         let result = analyze_sessions(&paths, Some(&[path.as_path()])).unwrap();
-        assert_eq!(result.silent_failure_sessions, 1, "action marker with same state_id before/after must be a silent failure");
+        assert_eq!(result.silent_failure_sessions, 1);
         let _ = std::fs::remove_file(&path);
     }
 
@@ -353,7 +353,7 @@ mod tests {
 
         let paths: Vec<&Path> = vec![path.as_path()];
         let result = analyze_sessions(&paths, Some(&[path.as_path()])).unwrap();
-        assert_eq!(result.silent_failure_sessions, 0, "action that changes state_id is not a silent failure");
+        assert_eq!(result.silent_failure_sessions, 0);
         let _ = std::fs::remove_file(&path);
     }
 

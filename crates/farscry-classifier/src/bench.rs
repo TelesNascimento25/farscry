@@ -35,9 +35,7 @@ fn benchmark_20_elements() {
     println!("Elements classified: {}", elements.len());
 
     assert!(
-        elapsed.as_millis() < 2,
-        "Classification should be < 2ms for 20 elements"
-    );
+        elapsed.as_millis() < 2);
 }
 
 #[test]
