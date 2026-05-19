@@ -1,4 +1,6 @@
+#[cfg(target_os = "macos")]
 use anyhow::Result;
+#[cfg(target_os = "macos")]
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
@@ -10,6 +12,7 @@ pub mod linux;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
+#[cfg(target_os = "macos")]
 pub fn check_clipboard_file_path(text: &str) -> Option<PathBuf> {
     let path = PathBuf::from(text.trim());
     if path.exists() && path.is_file() {
@@ -18,6 +21,7 @@ pub fn check_clipboard_file_path(text: &str) -> Option<PathBuf> {
     None
 }
 
+#[cfg(target_os = "macos")]
 pub fn supported_image_extension(path: &Path) -> Result<()> {
     let ext = path
         .extension()

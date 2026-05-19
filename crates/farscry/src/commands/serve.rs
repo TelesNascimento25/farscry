@@ -174,14 +174,10 @@ impl SessionRecorder {
         let unique = self.writer.frame_count;
         let total = self.writer.total_input;
         let dupes = total.saturating_sub(unique);
-        let pct = if total > 0 { dupes * 100 / total } else { 0 };
+        let pct = (dupes * 100).checked_div(total).unwrap_or(0);
         let tokens_raw = total as u64 * 2765;
         let tokens_vasf = unique as u64 * 200;
-        let ratio = if tokens_vasf > 0 {
-            tokens_raw / tokens_vasf
-        } else {
-            0
-        };
+        let ratio = tokens_raw.checked_div(tokens_vasf).unwrap_or(0);
         eprintln!("[farscry] session complete");
         eprintln!("[farscry] unique states: {unique} of {total} frames ({pct}% deduplicated)");
         eprintln!("[farscry] tokens without farscry: ~{tokens_raw}");

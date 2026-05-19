@@ -187,7 +187,7 @@ fn capture_loop(state: SharedState) {
     #[cfg(target_os = "macos")]
     let stream = DisplayStream::start(2);
     #[cfg(not(target_os = "macos"))]
-    let stream: Option<()> = None;
+    let _stream: Option<()> = None;
 
     loop {
         thread::sleep(Duration::from_secs(1));

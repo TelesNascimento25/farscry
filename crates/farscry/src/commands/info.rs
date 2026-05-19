@@ -39,7 +39,7 @@ pub fn info(input: PathBuf) -> Result<()> {
 
 fn print_breakdown(vasf: &VasfFile) {
     let mut bd: Vec<(String, u32)> = vasf.screen_type_breakdown().into_iter().collect();
-    bd.sort_by(|a, b| b.1.cmp(&a.1));
+    bd.sort_by_key(|b| std::cmp::Reverse(b.1));
     let total = vasf.unique_states().max(1);
     println!("states breakdown:");
     for (st, count) in &bd {

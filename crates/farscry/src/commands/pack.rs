@@ -73,14 +73,10 @@ fn is_image_file(p: &Path) -> bool {
 
 fn print_stats(total: usize, unique: usize, output: &Path) {
     let dupes = total.saturating_sub(unique);
-    let dedup_pct = if total > 0 { dupes * 100 / total } else { 0 };
+    let dedup_pct = (dupes * 100).checked_div(total).unwrap_or(0);
     let tokens_raw = total * 1568;
     let tokens_vasf = unique * 175;
-    let ratio = if tokens_vasf > 0 {
-        tokens_raw / tokens_vasf
-    } else {
-        0
-    };
+    let ratio = tokens_raw.checked_div(tokens_vasf).unwrap_or(0);
     eprintln!(
         "[farscry] packed {} unique frames from {} total -> {}",
         unique,

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+#[cfg(not(target_os = "linux"))]
 use crossbeam_channel::bounded;
 use farscry_core::vasf::VasfWriter;
 use farscry_core::StateId;
@@ -98,7 +99,7 @@ fn run_capture_loop(opts: RecordOpts) -> Result<()> {
 /// then drop the frame reference.  No large heap allocation occurs:
 ///   - X11 shared memory: not in Rust heap, not in process RSS
 ///   - phash_from_bgra: ~1 KB gray + ~20 KB DCT, freed immediately
-/// Steady-state RSS: process baseline only (~7 MB).
+///     Steady-state RSS: process baseline only (~7 MB).
 #[cfg(target_os = "linux")]
 fn capture_loop_linux(opts: RecordOpts) -> Result<()> {
     use scrap::{Capturer, Display};
@@ -369,8 +370,9 @@ fn capture_screen(window_pid: Option<u32>) -> Option<image::DynamicImage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossbeam_channel::bounded;
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "linux")))]
     fn rss_kib() -> u64 {
         let Ok(out) = std::process::Command::new("ps")
             .args(["-o", "rss=", "-p", &std::process::id().to_string()])
