@@ -229,7 +229,7 @@ fn parse_screen_type(s: &str) -> ScreenType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vasf::{VasfFile, VasfFrame};
+    use crate::vasf::{VasfFile, VasfFrame, VasfWriter};
 
     fn make_frame(state_bits: u64, screen_type: &str, agent_ctx: &str) -> VasfFrame {
         VasfFrame {
@@ -242,9 +242,15 @@ mod tests {
     }
 
     fn tmp_vasf(label: &str, frames: Vec<VasfFrame>, total_input: u32) -> std::path::PathBuf {
-        let path = std::path::PathBuf::from(format!("/tmp/_analyze_{label}.vasf"));
+        let path = std::env::temp_dir().join(format!("_analyze_{label}.vasf"));
         VasfFile::new(frames, total_input).write_to(&path).unwrap();
         path
+    }
+
+    fn tmp_vasf_writer(label: &str) -> (VasfWriter, std::path::PathBuf) {
+        let path = std::env::temp_dir().join(format!("_analyze_{label}.vasf"));
+        let w = VasfWriter::create(&path).unwrap();
+        (w, path)
     }
 
     #[test]
@@ -305,15 +311,49 @@ mod tests {
     }
 
     #[test]
-    fn test_silent_failure_from_total_input() {
+    fn test_no_silent_failure_without_action_markers() {
         let path = tmp_vasf(
-            "silent_failure_input",
+            "no_sf_no_markers",
             vec![make_frame(1, "error", "stuck")],
             5,
         );
         let paths: Vec<&Path> = vec![path.as_path()];
         let result = analyze_sessions(&paths, None).unwrap();
-        assert_eq!(result.silent_failure_sessions, 1);
+        assert_eq!(result.silent_failure_sessions, 0, "sessions without action markers cannot report silent failures");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_silent_failure_detected_via_action_marker() {
+        let (mut w, path) = tmp_vasf_writer("sf_with_marker");
+        let same_id = StateId::from_bits(0xDEAD);
+        let vasp = format!("screen_type: error\nagent_context: \"stuck\"\n");
+        w.append_state(same_id, &vasp).unwrap();
+        w.append_action_marker().unwrap();
+        w.append_state(same_id, &vasp).unwrap();
+        w.finalize().unwrap();
+
+        let paths: Vec<&Path> = vec![path.as_path()];
+        let result = analyze_sessions(&paths, Some(&[path.as_path()])).unwrap();
+        assert_eq!(result.silent_failure_sessions, 1, "action marker with same state_id before/after must be a silent failure");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_no_silent_failure_when_action_changes_state() {
+        let (mut w, path) = tmp_vasf_writer("sf_marker_changed");
+        let before = StateId::from_bits(0xAAAA);
+        let after = StateId::from_bits(0xBBBB);
+        let vasp_before = "screen_type: ui\nagent_context: \"before\"\n";
+        let vasp_after = "screen_type: error\nagent_context: \"after\"\n";
+        w.append_state(before, vasp_before).unwrap();
+        w.append_action_marker().unwrap();
+        w.append_state(after, vasp_after).unwrap();
+        w.finalize().unwrap();
+
+        let paths: Vec<&Path> = vec![path.as_path()];
+        let result = analyze_sessions(&paths, Some(&[path.as_path()])).unwrap();
+        assert_eq!(result.silent_failure_sessions, 0, "action that changes state_id is not a silent failure");
         let _ = std::fs::remove_file(&path);
     }
 
