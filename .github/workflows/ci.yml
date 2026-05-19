@@ -12,6 +12,19 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  no-comments:
+    name: no comments in Rust source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject any // or /* in crates/
+        run: |
+          if grep -rn --include="*.rs" -E "^\s*(//|/\*)" crates/; then
+            echo "BLOCKED: comments found in Rust source. Remove them before merging."
+            exit 1
+          fi
+
   audit:
     name: Security audit (cargo audit)
     runs-on: ubuntu-latest

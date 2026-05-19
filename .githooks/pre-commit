@@ -1,0 +1,12 @@
+#!/bin/sh
+STAGED=$(git diff --cached --name-only | grep '\.rs$')
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+FOUND=$(echo "$STAGED" | xargs grep -lnE "^\s*(//|/\*)" 2>/dev/null)
+if [ -n "$FOUND" ]; then
+  echo "BLOCKED: comments found in Rust source:"
+  echo "$FOUND"
+  echo "Remove all //, ///, //!, /* */ before committing."
+  exit 1
+fi
