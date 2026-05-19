@@ -23,6 +23,7 @@ pub struct RecordOpts {
 }
 
 pub fn record(opts: RecordOpts) -> Result<()> {
+    #[cfg(unix)]
     if opts.daemon && opts.global {
         let shell_pid = opts
             .shell_pid

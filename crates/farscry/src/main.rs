@@ -174,6 +174,7 @@ enum Commands {
     },
 
     /// Global session-recording daemon (one per machine).
+    #[cfg(unix)]
     Daemon {
         /// Start the daemon in the foreground (called internally).
         #[arg(long)]
@@ -300,6 +301,7 @@ async fn main() {
                 commands::session::session_list()
             }
         }
+        #[cfg(unix)]
         Commands::Daemon { unregister, .. } => {
             if let Some(shell_pid) = unregister {
                 commands::daemon::unregister(shell_pid)

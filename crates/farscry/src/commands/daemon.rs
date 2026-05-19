@@ -1,3 +1,4 @@
+#![cfg(unix)]
 
 use anyhow::{Context, Result};
 use chrono::Utc;
