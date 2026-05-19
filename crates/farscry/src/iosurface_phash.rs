@@ -19,9 +19,6 @@ extern "C" {
     fn farscry_stream_stop(handle: *mut c_void);
 }
 
-/// A CGDisplayStream that delivers the primary display at 32×32 to a callback.
-/// Frames are rate-limited to `fps_limit` per second by the ObjC layer.
-/// The latest pHash is stored atomically and can be read from any thread.
 pub struct DisplayStream {
     handle: *mut c_void,
     pub latest_hash: Arc<AtomicU64>,
@@ -36,8 +33,6 @@ struct StreamCtx {
 }
 
 impl DisplayStream {
-    /// Start a 32×32 display stream on the primary display.
-    /// `fps_limit`: maximum pHash computations per second (default 2, enough for 1 FPS daemon).
     pub fn start(fps_limit: u32) -> Option<Self> {
         let latest_hash = Arc::new(AtomicU64::new(0));
         let ctx = Box::new(StreamCtx {
@@ -59,8 +54,6 @@ impl DisplayStream {
         })
     }
 
-    /// Read the most recent pHash delivered by the stream.
-    /// Returns None if no frame has arrived yet.
     pub fn latest_phash(&self) -> Option<StateId> {
         let bits = self.latest_hash.load(Ordering::Relaxed);
         if bits == 0 {
@@ -87,13 +80,6 @@ unsafe extern "C" fn frame_callback(base: *const c_void, bpr: usize, ctx: *mut c
     sc.latest_hash.store(hash.to_bits(), Ordering::Relaxed);
 }
 
-/// Sample 32×32 from a BGRA IOSurface and compute DCT pHash.
-///
-/// Uses `(i + 0.5) * src_size / 32` sampling to match
-/// `image::imageops::FilterType::Nearest` so hashes are consistent
-/// with the heap-copy reference implementation.
-///
-/// Total allocation: 1024-byte gray Vec + ~12 KB inside farscry_core::phash_image.
 fn sample_and_phash(pixels: &[u8], w: usize, h: usize, bpr: usize) -> StateId {
     let mut gray = vec![0u8; 1024];
     for row in 0..32usize {
@@ -122,8 +108,6 @@ use core_graphics::window::{
     kCGWindowNumber, kCGWindowOwnerPID, CGWindowID,
 };
 
-/// Walk the ancestor process tree from `start_pid` and return the first PID
-/// that owns a visible GUI window in the CGWindow list.
 pub fn find_terminal_window(start_pid: u32) -> Option<CGWindowID> {
     let mut pid = start_pid;
     for _ in 0..8 {
@@ -138,7 +122,6 @@ pub fn find_terminal_window(start_pid: u32) -> Option<CGWindowID> {
     None
 }
 
-/// Return the first CGWindowID owned by `target_pid`.
 fn window_for_pid(target_pid: u32) -> Option<CGWindowID> {
     #[allow(improper_ctypes)]
     extern "C" {
@@ -178,7 +161,6 @@ fn window_for_pid(target_pid: u32) -> Option<CGWindowID> {
     None
 }
 
-/// Return the parent PID of `pid` via ps(1).
 pub fn ppid(pid: u32) -> Option<u32> {
     let out = std::process::Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "ppid="])
@@ -205,7 +187,6 @@ pub fn daemon_sock_file() -> PathBuf {
         .join("daemon.sock")
 }
 
-/// Return true if a process with this PID is running.
 pub fn process_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;

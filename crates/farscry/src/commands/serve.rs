@@ -203,7 +203,14 @@ struct RecordingAdapter {
 }
 
 impl farscry_mcp::PipelineOps for RecordingAdapter {
-    fn process(&self, image_path: &str) -> Result<VaspOutput, String> {
+    fn process(&self, image_path: &str, after_action: bool) -> Result<VaspOutput, String> {
+        if after_action {
+            if let Ok(mut guard) = self.recorder.lock() {
+                if let Some(rec) = guard.as_mut() {
+                    let _ = rec.writer.append_action_marker();
+                }
+            }
+        }
         let img = image::open(image_path).map_err(|e| format!("cannot open image: {e}"))?;
         let output = self.pipeline.process(img).map_err(|e| e.to_string())?;
         if let Ok(mut guard) = self.recorder.lock() {

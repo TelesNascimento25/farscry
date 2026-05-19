@@ -30,8 +30,6 @@ struct WindowEntry {
 
 type SharedState = Arc<Mutex<HashMap<u32, WindowEntry>>>;
 
-/// Start the global daemon.  Fails immediately if another daemon instance is
-/// detected (PID file exists and process is alive).
 pub fn run_daemon() -> Result<()> {
     let pid_path = pid_path();
     let sock_path = sock_path();
@@ -69,9 +67,6 @@ pub fn run_daemon() -> Result<()> {
     Ok(())
 }
 
-/// Called by `farscry record --daemon --global`.
-/// Ensures a daemon is running, registers the terminal's shell PID,
-/// and prints the assigned session file path to stdout.
 pub fn connect_and_register(shell_pid: u32) -> Result<()> {
     ensure_daemon_running()?;
 
@@ -95,7 +90,6 @@ pub fn connect_and_register(shell_pid: u32) -> Result<()> {
     }
 }
 
-/// Called by the shell EXIT trap (`farscry daemon unregister <pid>`).
 pub fn unregister(shell_pid: u32) -> Result<()> {
     let sock_path = sock_path();
     let Ok(mut stream) = UnixStream::connect(&sock_path) else {

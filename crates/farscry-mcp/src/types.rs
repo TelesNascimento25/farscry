@@ -25,6 +25,8 @@ pub struct JsonRpcError {
 #[derive(Debug, Deserialize)]
 pub(crate) struct ExtractParams {
     pub image_path: String,
+    #[serde(default)]
+    pub after_action: bool,
 }
 
 #[derive(Debug, Deserialize)]

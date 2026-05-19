@@ -10,7 +10,7 @@ use farscry_core::{VaspDelta, VaspOutput};
 use std::sync::{Arc, Mutex};
 
 pub trait PipelineOps: Clone + Send + 'static {
-    fn process(&self, image_path: &str) -> Result<VaspOutput, String>;
+    fn process(&self, image_path: &str, after_action: bool) -> Result<VaspOutput, String>;
 
     fn diff(
         &self,
@@ -36,7 +36,7 @@ use farscry_core::{Confidence, ElementType, ScreenType, StateId, UiElement};
 
 #[cfg(test)]
 impl PipelineOps for MockPipeline {
-    fn process(&self, _image_path: &str) -> Result<VaspOutput, String> {
+    fn process(&self, _image_path: &str, _after_action: bool) -> Result<VaspOutput, String> {
         Ok(VaspOutput::new(
             StateId::from_bits(0x123456789ABCDEF0),
             ScreenType::Ui,

@@ -3,8 +3,6 @@ use image::{DynamicImage, Rgba};
 use imageproc::drawing::draw_hollow_rect_mut;
 use imageproc::rect::Rect;
 
-/// 12 neon colors cycled by element index.
-/// Adjacent boxes always get different colors; no fill avoids overlap noise.
 const NEON: &[Rgba<u8>] = &[
     Rgba([255, 0, 128, 255]),
     Rgba([0, 255, 80, 255]),
@@ -20,17 +18,6 @@ const NEON: &[Rgba<u8>] = &[
     Rgba([255, 255, 0, 255]),
 ];
 
-/// Draw bounding boxes over every detected UI element.
-///
-/// Each element receives a unique neon color (cycled by index) so adjacent
-/// detections are always visually distinct.
-///
-/// Border strategy — inward only, 2 pixels:
-///   pixel 0 (outermost): black  — anchors the box on any background
-///   pixel 1 (inner):     neon   — the identifying color
-///
-/// Drawing inward means boxes that share an edge never overwrite each other.
-/// Affordances that coincide with a ui_tree element get a third neon pixel.
 pub fn annotate_image(img: DynamicImage, output: &VaspOutput) -> DynamicImage {
     let mut rgba = img.to_rgba8();
     let img_w = rgba.width() as i32;

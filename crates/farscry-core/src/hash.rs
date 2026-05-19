@@ -14,13 +14,6 @@ pub fn phash_image(image: &DynamicImage) -> StateId {
     pack_phash_bits(&dct)
 }
 
-/// Compute pHash directly from raw BGRA pixel data — no heap allocation for
-/// the pixel buffer itself.  `data` is the raw frame slice (BGRA, 4 bytes per
-/// pixel, may have per-row padding).  `w` and `h` are the pixel dimensions.
-///
-/// Total heap allocation: ~20 KB (DCT planner + 32-element scratch buffers),
-/// all freed on return.  The frame slice itself (X11 shared memory on Linux)
-/// is never copied.
 pub fn phash_from_bgra(data: &[u8], w: u32, h: u32) -> StateId {
     let wu = w as usize;
     let hu = h as usize;

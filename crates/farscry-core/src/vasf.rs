@@ -12,6 +12,12 @@ const TOKENS_PER_RAW_FRAME: u64 = 16_000;
 
 const TOKENS_PER_VASF_FRAME: u64 = 900;
 
+pub const ACTION_MARKER_TAG: &[u8] = b"action_marker\n";
+
+pub fn is_action_marker(frame: &VasfFrame) -> bool {
+    frame.vasp_data.starts_with(ACTION_MARKER_TAG)
+}
+
 pub struct VasfHeader {
     pub version: u16,
     pub frame_count: u32,
@@ -244,6 +250,7 @@ pub struct VasfWriter {
     writer: BufWriter<std::fs::File>,
     pub frame_count: u32,
     pub total_input: u32,
+    pub last_state_id: Option<StateId>,
 }
 
 impl VasfWriter {
@@ -264,6 +271,7 @@ impl VasfWriter {
             writer: w,
             frame_count: 0,
             total_input: 0,
+            last_state_id: None,
         })
     }
 
@@ -289,6 +297,7 @@ impl VasfWriter {
             },
         )?;
         self.frame_count = self.frame_count.saturating_add(1);
+        self.last_state_id = Some(state_id);
         self.update_header_in_place()
     }
 
@@ -298,6 +307,25 @@ impl VasfWriter {
         _state_id: StateId,
     ) -> std::io::Result<()> {
         self.total_input = self.total_input.saturating_add(1);
+        self.update_header_in_place()
+    }
+
+    pub fn append_action_marker(&mut self) -> std::io::Result<()> {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let last_id = self.last_state_id.unwrap_or_else(|| StateId::from_bits(0));
+        write_frame(
+            &mut self.writer,
+            &VasfFrame {
+                state_id: last_id,
+                timestamp: ts,
+                vasp_data: ACTION_MARKER_TAG.to_vec(),
+                delta_data: None,
+            },
+        )?;
+        self.frame_count = self.frame_count.saturating_add(1);
         self.update_header_in_place()
     }
 

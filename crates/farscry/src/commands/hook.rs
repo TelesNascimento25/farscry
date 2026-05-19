@@ -4,11 +4,6 @@ use std::path::PathBuf;
 const HOOK_MARKER: &str = "# farscry hook";
 const HOOK_EVAL_LINE: &str = "eval \"$(farscry hook init)\"  # farscry hook";
 
-/// On macOS: checks CGPreflightScreenCaptureAccess().
-/// If permission is not granted, opens System Settings → Screen Recording,
-/// prints onboarding instructions, and exits 0 (not an error — this is the
-/// expected first-run flow for any screen-capture tool).
-/// On non-macOS platforms this is a no-op.
 #[cfg(target_os = "macos")]
 fn check_screen_capture_permission() {
     extern "C" {

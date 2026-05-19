@@ -148,11 +148,9 @@ enum Commands {
         #[arg(long)]
         window_pid: Option<u32>,
 
-        /// Use the single global daemon (one per machine, ~7 MB RSS).
         #[arg(long)]
         global: bool,
 
-        /// Shell PID of the terminal to register. Defaults to parent PID.
         #[arg(long)]
         pid: Option<u32>,
     },
@@ -173,14 +171,25 @@ enum Commands {
         latest: bool,
     },
 
-    /// Global session-recording daemon (one per machine).
+    Analyze {
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+
+        #[arg(long = "failed", value_name = "FILE")]
+        failed: Vec<PathBuf>,
+
+        #[arg(long, default_value = "1")]
+        min_sessions: usize,
+
+        #[arg(long)]
+        json: bool,
+    },
+
     #[cfg(unix)]
     Daemon {
-        /// Start the daemon in the foreground (called internally).
         #[arg(long)]
         start: bool,
 
-        /// Unregister a terminal shell PID from the daemon.
         #[arg(long, value_name = "SHELL_PID")]
         unregister: Option<u32>,
     },
@@ -304,6 +313,12 @@ async fn main() {
                 commands::session::session_list()
             }
         }
+        Commands::Analyze {
+            paths,
+            failed,
+            min_sessions,
+            json,
+        } => commands::analyze::analyze(paths, failed, min_sessions, json),
         #[cfg(unix)]
         Commands::Daemon { unregister, .. } => {
             if let Some(shell_pid) = unregister {

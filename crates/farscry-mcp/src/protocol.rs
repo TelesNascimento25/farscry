@@ -74,7 +74,7 @@ impl<P: PipelineOps> McpServer<P> {
                     "image_paths": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Absolute paths to multiple image files — processed in parallel, outputs separated by ---"
+                        "description": "Absolute paths to multiple image files - processed in parallel, outputs separated by ---"
                     },
                     "lang": {
                         "type": "string",
@@ -85,6 +85,11 @@ impl<P: PipelineOps> McpServer<P> {
                         "type": "boolean",
                         "description": "Include affordances (click/type targets) in output",
                         "default": true
+                    },
+                    "after_action": {
+                        "type": "boolean",
+                        "description": "Set to true when called immediately after a computer-use action (click, type, keypress). Records an action marker in the session file so silent failures can be measured precisely. Silent failure = action produced no visual change.",
+                        "default": false
                     }
                 }
             }
@@ -151,6 +156,10 @@ impl<P: PipelineOps> McpServer<P> {
                 )
             })?
             .to_string();
+        let after_action = arguments
+            .get("after_action")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let (img_w, img_h) = image::image_dimensions(&image_path).unwrap_or((1920, 1080));
         let image_path_for_fmt = image_path.clone();
         let pipeline = self.pipeline.clone();
@@ -158,7 +167,7 @@ impl<P: PipelineOps> McpServer<P> {
             pipeline
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .process(&image_path)
+                .process(&image_path, after_action)
         })
         .await
         .map_err(|e| mcp_error(-32000, &format!("Spawn error: {e}")))?;
@@ -194,7 +203,7 @@ impl<P: PipelineOps> McpServer<P> {
                 let result = pipeline
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .process(&path);
+                    .process(&path, false);
                 (path, dims, result)
             });
             tasks.push(task);
@@ -239,13 +248,13 @@ impl<P: PipelineOps> McpServer<P> {
                 pipeline1
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .process(&before_path)
+                    .process(&before_path, false)
             }),
             tokio::task::spawn_blocking(move || {
                 pipeline2
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .process(&after_path)
+                    .process(&after_path, false)
             })
         );
         let before = before_result

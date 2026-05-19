@@ -40,7 +40,7 @@ impl<P: PipelineOps> McpServer<P> {
             pipeline
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .process(&image_path)
+                .process(&image_path, false)
         })
         .await
         .map_err(|e| format!("Task error: {e}"))??;
@@ -76,13 +76,13 @@ impl<P: PipelineOps> McpServer<P> {
                 pipeline1
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .process(&before_path)
+                    .process(&before_path, false)
             }),
             tokio::task::spawn_blocking(move || {
                 pipeline2
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .process(&after_path)
+                    .process(&after_path, false)
             })
         );
         let before = before_result.map_err(|e| format!("Task error: {e}"))??;

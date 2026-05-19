@@ -1,3 +1,4 @@
+pub mod analyze;
 pub mod annotate;
 #[cfg(unix)]
 pub mod daemon;
