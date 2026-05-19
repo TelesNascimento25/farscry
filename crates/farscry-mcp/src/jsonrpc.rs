@@ -33,6 +33,7 @@ impl<P: PipelineOps> McpServer<P> {
         let params: ExtractParams = serde_json::from_value(request.params.clone())
             .map_err(|e| format!("Invalid params: {e}"))?;
         let image_path = params.image_path;
+        let after_action = params.after_action;
         let (img_w, img_h) = image::image_dimensions(&image_path).unwrap_or((1920, 1080));
         let image_path_for_fmt = image_path.clone();
         let pipeline = self.pipeline.clone();
@@ -40,7 +41,7 @@ impl<P: PipelineOps> McpServer<P> {
             pipeline
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .process(&image_path, false)
+                .process(&image_path, after_action)
         })
         .await
         .map_err(|e| format!("Task error: {e}"))??;
