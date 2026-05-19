@@ -185,6 +185,8 @@ enum Commands {
         json: bool,
     },
 
+    MarkAction,
+
     #[cfg(unix)]
     Daemon {
         #[arg(long)]
@@ -319,6 +321,7 @@ async fn main() {
             min_sessions,
             json,
         } => commands::analyze::analyze(paths, failed, min_sessions, json),
+        Commands::MarkAction => commands::mark_action::mark_action(),
         #[cfg(unix)]
         Commands::Daemon { unregister, .. } => {
             if let Some(shell_pid) = unregister {

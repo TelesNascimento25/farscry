@@ -7,6 +7,7 @@ pub mod extract;
 pub mod hook;
 pub mod info;
 pub mod install;
+pub mod mark_action;
 pub mod pack;
 pub mod paste;
 pub mod record;

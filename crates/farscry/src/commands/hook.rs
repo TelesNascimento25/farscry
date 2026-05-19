@@ -55,6 +55,17 @@ _farscry_session_stop() {
   unset FARSCRY_SESSION_PID FARSCRY_SESSION_FILE
 }
 
+_farscry_preexec() {
+  farscry mark-action 2>/dev/null &
+}
+
+if [ -n "$ZSH_VERSION" ]; then
+  autoload -Uz add-zsh-hook 2>/dev/null
+  add-zsh-hook preexec _farscry_preexec 2>/dev/null
+elif [ -n "$BASH_VERSION" ]; then
+  trap '_farscry_preexec' DEBUG 2>/dev/null
+fi
+
 trap '_farscry_session_stop' EXIT
 _farscry_session_start"#;
 

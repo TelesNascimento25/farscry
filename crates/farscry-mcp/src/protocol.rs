@@ -56,7 +56,11 @@ impl<P: PipelineOps> McpServer<P> {
 
     fn mcp_tools_list(&self) -> Result<Value, Value> {
         Ok(serde_json::json!({
-            "tools": [Self::extract_tool_schema(), Self::diff_tool_schema()]
+            "tools": [
+                Self::extract_tool_schema(),
+                Self::diff_tool_schema(),
+                Self::mark_action_tool_schema()
+            ]
         }))
     }
 
@@ -96,6 +100,17 @@ impl<P: PipelineOps> McpServer<P> {
         })
     }
 
+    fn mark_action_tool_schema() -> Value {
+        serde_json::json!({
+            "name": "farscry_mark_action",
+            "description": "Write an action marker to the current session. Call this BEFORE taking a computer-use action (click, type, keypress). farscry will compare the visual state before and after to detect silent failures (AER). No parameters required.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        })
+    }
+
     fn diff_tool_schema() -> Value {
         serde_json::json!({
             "name": "farscry_diff",
@@ -129,6 +144,7 @@ impl<P: PipelineOps> McpServer<P> {
         match name {
             "farscry_extract" => self.handle_mcp_extract_tool(&arguments).await,
             "farscry_diff" => self.handle_mcp_diff_tool(&arguments).await,
+            "farscry_mark_action" => self.handle_mcp_mark_action().await,
             other => Err(mcp_error(-32602, &format!("Unknown tool: {other}"))),
         }
     }
@@ -226,6 +242,16 @@ impl<P: PipelineOps> McpServer<P> {
             }
         }
         Ok(tool_result_text(&combined))
+    }
+
+    async fn handle_mcp_mark_action(&self) -> Result<Value, Value> {
+        self.pipeline
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .mark_action();
+        Ok(crate::helpers::tool_result_text(
+            "action_marker: written\nfarscry will compare visual state before and after this action.",
+        ))
     }
 
     async fn handle_mcp_diff_tool(&self, arguments: &Value) -> Result<Value, Value> {

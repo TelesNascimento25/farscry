@@ -49,9 +49,22 @@ async fn run_server<P: farscry_mcp::PipelineOps>(port: Option<u16>, adapter: P) 
             return;
         }
     };
+    #[cfg(unix)]
+    let sigterm = async {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let Ok(mut s) = signal(SignalKind::terminate()) {
+            s.recv().await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(not(unix))]
+    let sigterm = std::future::pending::<()>();
+
     tokio::select! {
         r = task => { if let Err(e) = r { eprintln!("[farscry] server error: {e}"); } }
         _ = tokio::signal::ctrl_c() => { eprintln!("[farscry] shutting down"); }
+        _ = sigterm => { eprintln!("[farscry] shutting down (SIGTERM)"); }
     }
 }
 
@@ -108,6 +121,10 @@ fn prompt_record_session() -> Result<Option<PathBuf>> {
     } else {
         Ok(None)
     }
+}
+
+pub fn default_socket_path_pub() -> std::path::PathBuf {
+    default_socket_path()
 }
 
 fn default_socket_path() -> PathBuf {
@@ -203,13 +220,17 @@ struct RecordingAdapter {
 }
 
 impl farscry_mcp::PipelineOps for RecordingAdapter {
+    fn mark_action(&self) {
+        if let Ok(mut guard) = self.recorder.lock() {
+            if let Some(rec) = guard.as_mut() {
+                let _ = rec.writer.append_action_marker();
+            }
+        }
+    }
+
     fn process(&self, image_path: &str, after_action: bool) -> Result<VaspOutput, String> {
         if after_action {
-            if let Ok(mut guard) = self.recorder.lock() {
-                if let Some(rec) = guard.as_mut() {
-                    let _ = rec.writer.append_action_marker();
-                }
-            }
+            self.mark_action();
         }
         let img = image::open(image_path).map_err(|e| format!("cannot open image: {e}"))?;
         let output = self.pipeline.process(img).map_err(|e| e.to_string())?;
