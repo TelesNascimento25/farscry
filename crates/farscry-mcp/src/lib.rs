@@ -97,7 +97,7 @@ mod tests {
     #[test]
     fn test_mock_pipeline_process() {
         let pipeline = MockPipeline;
-        let result = pipeline.process("test.png");
+        let result = pipeline.process("test.png", false);
         assert!(result.is_ok());
         let output = result.unwrap();
         assert_eq!(output.ui_tree.len(), 1);
@@ -107,8 +107,8 @@ mod tests {
     #[test]
     fn test_mock_pipeline_diff() {
         let pipeline = MockPipeline;
-        let before = pipeline.process("before.png").unwrap();
-        let after = pipeline.process("after.png").unwrap();
+        let before = pipeline.process("before.png", false).unwrap();
+        let after = pipeline.process("after.png", false).unwrap();
         let delta = pipeline.diff(&before, &after, None, None);
         assert_eq!(delta.context_similarity, 1.0);
         assert!(!delta.context_changed);
