@@ -19,9 +19,11 @@ import argparse
 import base64
 import json
 import os
+import re as _re
 import struct
 import subprocess
 import time
+import xml.etree.ElementTree as ET
 from io import BytesIO
 from pathlib import Path
 
@@ -31,7 +33,16 @@ VL_SERVER = os.environ.get("VL_SERVER", "http://localhost:8083")
 FARSCRY_BIN = os.environ.get("FARSCRY_BIN", "farscry")
 SESSION_DIR = Path(os.environ.get("FARSCRY_SESSION_DIR", os.path.expanduser("~/.farscry/osworld")))
 
-SYSTEM_BASE = """You control a desktop. Output a single pyautogui Python statement to complete the next step toward the task.
+_A11Y_STATE_NS = "https://accessibility.ubuntu.example.org/ns/state"
+_A11Y_COMP_NS  = "https://accessibility.ubuntu.example.org/ns/component"
+
+INTERACTIVE_ROLES = {
+    "button", "check-box", "combo-box", "entry", "link", "menu", "menuitem",
+    "radio-button", "searchbox", "slider", "spin-button", "text", "textbox",
+    "textarea", "textfield", "toggle-button", "push-button", "menu-item",
+}
+
+SYSTEM_BASE = """You control a desktop. Output a single pyautogui Python statement.
 Examples:
   pyautogui.click(850, 420)
   pyautogui.doubleClick(400, 300)
@@ -45,74 +56,76 @@ Output only the statement. Do not explain."""
 
 SYSTEM_AUG = SYSTEM_BASE + """
 
-Screen state (VASP) is provided as structured text with element types and positions.
-A recovery action was automatically injected before this step — the screen state has changed.
-Act on the current screen. Do not repeat your last action."""
+Accessible UI elements are listed with exact coordinates. Use them for clicks.
+If you receive a [SILENT_FAILURE] warning, try a completely different action."""
 
-ZONE_COORDS = {
-    "top-left":      (320,  180), "top-center":    (960,  180), "top-right":     (1600, 180),
-    "middle-left":   (320,  540), "middle-center": (960,  540), "middle-right":  (1600, 540),
-    "bottom-left":   (320,  900), "bottom-center": (960,  900), "bottom-right":  (1600, 900),
-}
 
-import re as _re
+def parse_a11y_tree(xml_str: str, max_items: int = 30) -> list[dict]:
+    if not xml_str:
+        return []
+    try:
+        root = ET.fromstring(xml_str)
+    except ET.ParseError:
+        return []
 
-def parse_affordances(vasp_text: str) -> list[dict]:
-    results = []
-    in_aff = False
-    for line in vasp_text.splitlines():
-        if line.strip() == "affordances:":
-            in_aff = True
+    elements = []
+    for node in root.iter():
+        tag = node.tag.split("}")[-1] if "}" in node.tag else node.tag
+        role = tag.lower()
+
+        showing = node.get("{%s}showing" % _A11Y_STATE_NS, "false")
+        visible = node.get("{%s}visible" % _A11Y_STATE_NS, "false")
+        if showing != "true" or visible != "true":
             continue
-        if in_aff:
-            if not line.strip() or (not line.startswith(" ") and not line.startswith("\t")):
-                in_aff = False
-                continue
-            m = _re.search(r'(\w+)\s+[→>-]+\s*"([^"]*)"\s+at\s*\((\d+),\s*(\d+)\)', line)
-            if m:
-                results.append({"action": m.group(1), "label": m.group(2),
-                                 "x": int(m.group(3)), "y": int(m.group(4))})
-    return results
 
-def parse_zones(vasp_text: str) -> list[dict]:
-    results = []
-    for line in vasp_text.splitlines():
-        m = _re.match(r'\[+([^\]]+?)\]+\s+(\w+)\s+"([^"]*)"', line)
-        if m:
-            zone_raw = m.group(1).strip()
-            zone = _re.sub(r'\s+', '-', zone_raw.lower())
-            elem_type = m.group(2).lower()
-            label = m.group(3)
-            coords = None
-            for key, (cx, cy) in ZONE_COORDS.items():
-                if key in zone or zone in key:
-                    coords = (cx, cy)
-                    break
-            if coords and elem_type in ("button", "input", "link", "checkbox"):
-                results.append({"action": "click" if elem_type != "input" else "type",
-                                 "label": label, "x": coords[0], "y": coords[1],
-                                 "zone": zone, "source": "zone"})
-    return results
+        name = (node.get("name") or node.text or "").strip()
+        if not name:
+            continue
 
-def vasp_recovery_action(vasp_text: str, action_history: list[str]) -> str:
-    tried_coords = set()
-    for h in action_history[-6:]:
-        for x, y in _re.findall(r'\((\d+),\s*(\d+)\)', h):
-            tried_coords.add((int(x), int(y)))
+        coord_str = node.get("{%s}screencoord" % _A11Y_COMP_NS, "")
+        size_str  = node.get("{%s}size" % _A11Y_COMP_NS, "")
+        if not coord_str or not size_str:
+            continue
 
-    affordances = parse_affordances(vasp_text)
-    if not affordances:
-        affordances = parse_zones(vasp_text)
+        try:
+            x, y = map(int, _re.findall(r"-?\d+", coord_str)[:2])
+            w, h = map(int, _re.findall(r"-?\d+", size_str)[:2])
+        except (ValueError, IndexError):
+            continue
 
-    for aff in affordances:
-        if (aff["x"], aff["y"]) not in tried_coords:
-            return f"pyautogui.click({aff['x']}, {aff['y']})"
+        if w <= 0 or h <= 0 or x < 0 or y < 0:
+            continue
 
-    if affordances:
-        aff = affordances[0]
-        return f"pyautogui.click({aff['x']}, {aff['y']})"
+        cx, cy = x + w // 2, y + h // 2
+        elements.append({"role": role, "name": name[:60], "x": cx, "y": cy})
 
-    return "pyautogui.scroll(960, 540, 3)"
+        if len(elements) >= max_items * 3:
+            break
+
+    interactive = [e for e in elements if e["role"] in INTERACTIVE_ROLES]
+    if not interactive:
+        interactive = elements
+
+    seen = set()
+    result = []
+    for e in interactive:
+        key = (e["role"], e["name"][:30])
+        if key not in seen:
+            seen.add(key)
+            result.append(e)
+        if len(result) >= max_items:
+            break
+
+    return result
+
+
+def format_a11y_context(elements: list[dict]) -> str:
+    if not elements:
+        return ""
+    lines = ["UI elements (role name → click coords):"]
+    for e in elements:
+        lines.append(f"  {e['role']:12s} \"{e['name']}\" → ({e['x']}, {e['y']})")
+    return "\n".join(lines)
 
 
 def encode(path: str) -> str:
@@ -121,13 +134,13 @@ def encode(path: str) -> str:
 
 
 def vl_call(screenshot_path: str, task: str, history: list,
-             vasp: str = "", sf_feedback: str = "") -> str:
-    augmented = bool(vasp)
+            a11y_context: str = "", sf_feedback: str = "") -> str:
+    augmented = bool(a11y_context)
     parts = [f"Task: {task}"]
     if sf_feedback:
         parts.append(sf_feedback)
-    if vasp:
-        parts.append(f"Screen (VASP):\n{vasp[:1500]}")
+    if a11y_context:
+        parts.append(a11y_context)
     parts.append("Next action:")
 
     messages = [{"role": "system", "content": SYSTEM_AUG if augmented else SYSTEM_BASE}]
@@ -185,6 +198,15 @@ def action_to_pyautogui(raw: str) -> str | None:
     return None
 
 
+ESCAPE_LADDER = [
+    "pyautogui.press('escape')",
+    "pyautogui.hotkey('alt', 'F4')",
+    "pyautogui.hotkey('ctrl', 'z')",
+    "pyautogui.hotkey('ctrl', 'z')",
+    "pyautogui.click(960, 540)",
+]
+
+
 def run_task(env, task_id: str, task_instr: str, task_config: dict,
              max_steps: int, augmented: bool, out_dir: Path) -> dict:
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
@@ -197,7 +219,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
     consecutive_sf = 0
     state_before = ""
     agent_step = 0
-    recovery_count = 0
+    sf_feedback_count = 0
 
     obs = env.reset(task_config=task_config)
 
@@ -209,27 +231,46 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         if not os.path.exists(shot_path):
             break
 
-        vasp_text = ""
+        a11y_context = ""
+        sf_feedback = ""
+
         if augmented:
             state_before, vasp_text = farscry_state(shot_path)
             sf_frames.append((state_before, "state", vasp_text))
             sf_frames.append((None, "marker", ""))
 
+            a11y_xml = obs.get("accessibility_tree") if obs else None
+            elements = parse_a11y_tree(a11y_xml) if a11y_xml else []
+            a11y_context = format_a11y_context(elements)
+
             if consecutive_sf >= 1:
-                history_actions = [h["content"] for h in history if h.get("role") == "assistant"]
-                recovery_action = vasp_recovery_action(vasp_text, history_actions)
-                print(f"    [augment] SF x{consecutive_sf} → vasp_recovery: {recovery_action}")
-                obs, _, _, _ = env.step(recovery_action, pause=1.5)
-                recovery_count += 1
+                ladder_idx = min(consecutive_sf - 1, len(ESCAPE_LADDER) - 1)
+                escape_action = ESCAPE_LADDER[ladder_idx]
+
+                if consecutive_sf == 3:
+                    history = history[-1:] if history else []
+                    print(f"    [augment] SF x{consecutive_sf} → history cleared")
+
+                print(f"    [augment] SF x{consecutive_sf} → {escape_action}")
+                obs, _, _, _ = env.step(escape_action, pause=1.0)
+                sf_feedback_count += 1
                 shot_path = str(out_dir / f"{session_id}-s{step:02d}r.png")
                 save_screenshot(obs, shot_path)
                 if os.path.exists(shot_path):
-                    state_before, vasp_text = farscry_state(shot_path)
+                    state_before, _ = farscry_state(shot_path)
+                    a11y_xml = obs.get("accessibility_tree") if obs else None
+                    elements = parse_a11y_tree(a11y_xml) if a11y_xml else []
+                    a11y_context = format_a11y_context(elements)
+
                 consecutive_sf = 0
 
-        sf_feedback = ""
+                sf_feedback = (
+                    f"[SILENT_FAILURE x{consecutive_sf + 1}] Screen unchanged. "
+                    f"An escape action was executed. Try a different approach."
+                )
 
-        raw = vl_call(shot_path, task_instr, history, vasp=vasp_text, sf_feedback=sf_feedback)
+        raw = vl_call(shot_path, task_instr, history,
+                      a11y_context=a11y_context, sf_feedback=sf_feedback)
         history.append({"role": "assistant", "content": raw})
 
         if raw.upper().startswith("DONE"):
@@ -271,7 +312,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         "session_id": session_id,
         "augmented": augmented,
         "steps": agent_step,
-        "recovery_injections": recovery_count,
+        "sf_feedback_count": sf_feedback_count,
         "score": score,
         "passed": score > 0.5,
         "max_consecutive_sf": max_csf,
@@ -335,12 +376,12 @@ def main():
     tasks = json.loads(args.tasks.read_text())[:args.n]
     print(f"mode={args.mode}  augmented={augmented}  n={len(tasks)}")
 
-    print("Starting DesktopEnv (one container for all tasks)...")
+    print("Starting DesktopEnv...")
     env = DesktopEnv(
         path_to_vm=args.vm_path,
         provider_name=args.provider,
         action_space="pyautogui",
-        require_a11y_tree=False,
+        require_a11y_tree=augmented,
         headless=True,
     )
     print("DesktopEnv ready.")
