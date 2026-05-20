@@ -6,13 +6,25 @@ pub mod types;
 
 pub use types::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 
-use farscry_core::{VaspDelta, VaspOutput};
+use farscry_core::{StateId, VaspDelta, VaspOutput};
 use std::sync::{Arc, Mutex};
+
+#[derive(Debug, Clone)]
+pub enum ActionEffect {
+    SilentFailure { before: StateId, after: StateId },
+    Changed { before: StateId, after: StateId },
+}
 
 pub trait PipelineOps: Clone + Send + 'static {
     fn process(&self, image_path: &str, after_action: bool) -> Result<VaspOutput, String>;
 
-    fn mark_action(&self) {}
+    fn mark_action(&self) -> Option<StateId> {
+        None
+    }
+
+    fn last_action_effect(&self) -> Option<ActionEffect> {
+        None
+    }
 
     fn diff(
         &self,
@@ -34,7 +46,7 @@ pub struct McpServer<P> {
 pub struct MockPipeline;
 
 #[cfg(test)]
-use farscry_core::{Confidence, ElementType, ScreenType, StateId, UiElement};
+use farscry_core::{Confidence, ElementType, ScreenType, UiElement};
 
 #[cfg(test)]
 impl PipelineOps for MockPipeline {

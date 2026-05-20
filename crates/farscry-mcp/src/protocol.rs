@@ -187,6 +187,11 @@ impl<P: PipelineOps> McpServer<P> {
         })
         .await
         .map_err(|e| mcp_error(-32000, &format!("Spawn error: {e}")))?;
+        let effect = self
+            .pipeline
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .last_action_effect();
         match result {
             Ok(output) => {
                 let auto_diff = self.compute_auto_diff(&output).await;
@@ -203,6 +208,23 @@ impl<P: PipelineOps> McpServer<P> {
                         farscry_formatter::VaspFormatter::format_diff(d)
                     ),
                     None => vasp_text,
+                };
+                let text = match effect {
+                    Some(crate::ActionEffect::SilentFailure { before, after }) => format!(
+                        "{text}\n\n\
+                        ⚠ SILENT_FAILURE DETECTED\n\
+                          action had no visual effect\n\
+                          state_id_before: {before}\n\
+                          state_id_after:  {after}\n\
+                          recommendation: this action changed nothing — try a different approach"
+                    ),
+                    Some(crate::ActionEffect::Changed { before, after }) => format!(
+                        "{text}\n\n\
+                        ✓ action_effect: confirmed\n\
+                          state_id_before: {before}\n\
+                          state_id_after:  {after}"
+                    ),
+                    None => text,
                 };
                 Ok(tool_result_text(&text))
             }
@@ -245,13 +267,23 @@ impl<P: PipelineOps> McpServer<P> {
     }
 
     async fn handle_mcp_mark_action(&self) -> Result<Value, Value> {
-        self.pipeline
+        let state_id_before = self
+            .pipeline
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .mark_action();
-        Ok(crate::helpers::tool_result_text(
-            "action_marker: written\nfarscry will compare visual state before and after this action.",
-        ))
+        let msg = match state_id_before {
+            Some(sid) => format!(
+                "action_marker: written\n\
+                state_id_before: {sid}\n\
+                farscry will detect if your next action changes the visual state.\n\
+                Call farscry_extract after your action to see the result."
+            ),
+            None => "action_marker: written\n\
+                     note: no prior state recorded yet — call farscry_extract first to establish baseline."
+                .to_string(),
+        };
+        Ok(crate::helpers::tool_result_text(&msg))
     }
 
     async fn handle_mcp_diff_tool(&self, arguments: &Value) -> Result<Value, Value> {

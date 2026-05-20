@@ -23,10 +23,7 @@ pub async fn serve_mcp(
         .transpose()
         .map_err(|e| anyhow::anyhow!("Failed to create recorder: {e}"))?;
     let recorder_arc: Arc<Mutex<Option<SessionRecorder>>> = Arc::new(Mutex::new(recorder));
-    let adapter = RecordingAdapter {
-        pipeline,
-        recorder: recorder_arc.clone(),
-    };
+    let adapter = RecordingAdapter::new(pipeline, recorder_arc.clone());
     run_server(port, adapter).await;
     finalize_recorder(recorder_arc);
     Ok(())
@@ -142,6 +139,7 @@ fn timestamp_filename() -> String {
 struct SessionRecorder {
     writer: VasfWriter,
     last_state_id: Option<StateId>,
+    pending_action_state_id: Option<StateId>,
     hamming_threshold: u8,
     output_path: PathBuf,
     start_time: i64,
@@ -160,9 +158,31 @@ impl SessionRecorder {
         Ok(Self {
             writer,
             last_state_id: None,
+            pending_action_state_id: None,
             hamming_threshold,
             output_path,
             start_time,
+        })
+    }
+
+    fn do_mark_action(&mut self) -> Option<StateId> {
+        self.pending_action_state_id = self.last_state_id;
+        let _ = self.writer.append_action_marker();
+        self.last_state_id
+    }
+
+    fn consume_action_effect(&mut self, new_state: StateId) -> Option<farscry_mcp::ActionEffect> {
+        let before = self.pending_action_state_id.take()?;
+        Some(if before == new_state {
+            farscry_mcp::ActionEffect::SilentFailure {
+                before,
+                after: new_state,
+            }
+        } else {
+            farscry_mcp::ActionEffect::Changed {
+                before,
+                after: new_state,
+            }
         })
     }
 
@@ -217,15 +237,31 @@ impl SessionRecorder {
 struct RecordingAdapter {
     pipeline: Arc<Pipeline>,
     recorder: Arc<Mutex<Option<SessionRecorder>>>,
+    last_effect: Arc<Mutex<Option<farscry_mcp::ActionEffect>>>,
+}
+
+impl RecordingAdapter {
+    fn new(pipeline: Arc<Pipeline>, recorder: Arc<Mutex<Option<SessionRecorder>>>) -> Self {
+        Self {
+            pipeline,
+            recorder,
+            last_effect: Arc::new(Mutex::new(None)),
+        }
+    }
 }
 
 impl farscry_mcp::PipelineOps for RecordingAdapter {
-    fn mark_action(&self) {
+    fn mark_action(&self) -> Option<farscry_core::StateId> {
         if let Ok(mut guard) = self.recorder.lock() {
             if let Some(rec) = guard.as_mut() {
-                let _ = rec.writer.append_action_marker();
+                return rec.do_mark_action();
             }
         }
+        None
+    }
+
+    fn last_action_effect(&self) -> Option<farscry_mcp::ActionEffect> {
+        self.last_effect.lock().ok().and_then(|mut g| g.take())
     }
 
     fn process(&self, image_path: &str, after_action: bool) -> Result<VaspOutput, String> {
@@ -236,6 +272,12 @@ impl farscry_mcp::PipelineOps for RecordingAdapter {
         let output = self.pipeline.process(img).map_err(|e| e.to_string())?;
         if let Ok(mut guard) = self.recorder.lock() {
             if let Some(rec) = guard.as_mut() {
+                let effect = rec.consume_action_effect(output.state_id);
+                if let Some(eff) = effect {
+                    if let Ok(mut eg) = self.last_effect.lock() {
+                        *eg = Some(eff);
+                    }
+                }
                 rec.record(&output, image_path, after_action);
             }
         }
