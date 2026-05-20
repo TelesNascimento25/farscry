@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
+import sys
+import types
+
+for _pkg in ["acoustid", "librosa", "fastdtw", "PyPDF2", "borb", "mutagen", "pdfplumber"]:
+    if _pkg not in sys.modules:
+        sys.modules[_pkg] = types.ModuleType(_pkg)
+
 import argparse
 import base64
 import json
 import os
 import struct
 import subprocess
-import sys
 import time
 from io import BytesIO
 from pathlib import Path
