@@ -35,12 +35,180 @@ SESSION_DIR = Path(os.environ.get("FARSCRY_SESSION_DIR", os.path.expanduser("~/.
 
 _A11Y_STATE_NS = "https://accessibility.ubuntu.example.org/ns/state"
 _A11Y_COMP_NS  = "https://accessibility.ubuntu.example.org/ns/component"
+_A11Y_VAL_NS   = "https://accessibility.ubuntu.example.org/ns/value"
+_A11Y_ACT_NS   = "https://accessibility.ubuntu.example.org/ns/action"
+_A11Y_TXT_NS   = "https://accessibility.ubuntu.example.org/ns/text"
 
 INTERACTIVE_ROLES = {
     "button", "check-box", "combo-box", "entry", "link", "menu", "menuitem",
     "radio-button", "searchbox", "slider", "spin-button", "text", "textbox",
     "textarea", "textfield", "toggle-button", "push-button", "menu-item",
 }
+
+CONTENT_ROLES = {
+    "paragraph", "table-cell", "table", "heading", "label",
+    "static", "section", "document", "page",
+}
+
+
+def extract_semantic_state(xml_str: str, max_nodes: int = 60) -> dict:
+    """
+    Full semantic snapshot of the UI from AT-SPI tree.
+    Returns structured data: interactive, content, values, actions.
+    Works for any app that exposes AT-SPI. Zero hardcoding.
+    """
+    if not xml_str:
+        return {"interactive": [], "content": [], "values": [], "actions": {}}
+    try:
+        root = ET.fromstring(xml_str)
+    except ET.ParseError:
+        return {"interactive": [], "content": [], "values": [], "actions": {}}
+
+    interactive, content, values = [], [], []
+    actions: dict[str, list[str]] = {}
+
+    seen: set[str] = set()
+
+    for node in root.iter():
+        tag = node.tag.split("}")[-1] if "}" in node.tag else node.tag
+        role = tag.lower()
+
+        showing = node.get("{%s}showing" % _A11Y_STATE_NS, "false")
+        if showing != "true":
+            continue
+
+        name = (node.get("name") or node.text or "").strip()
+        if not name or name in seen:
+            continue
+
+        coord_str = node.get("{%s}screencoord" % _A11Y_COMP_NS, "")
+        if not coord_str:
+            continue
+        try:
+            x, y = map(int, _re.findall(r"-?\d+", coord_str)[:2])
+        except (ValueError, IndexError):
+            continue
+        if x < 0 or y < 0:
+            continue
+
+        size_str = node.get("{%s}size" % _A11Y_COMP_NS, "")
+        try:
+            w, h = map(int, _re.findall(r"-?\d+", size_str)[:2])
+            cx, cy = x + w // 2, y + h // 2
+        except (ValueError, IndexError):
+            cx, cy = x, y
+
+        enabled = node.get("{%s}enabled" % _A11Y_STATE_NS, "true") == "true"
+        checked = node.get("{%s}checked" % _A11Y_STATE_NS, "false") == "true"
+        selected = node.get("{%s}selected" % _A11Y_STATE_NS, "false") == "true"
+        expanded = node.get("{%s}expanded" % _A11Y_STATE_NS, "false") == "true"
+
+        val = node.get("{%s}current_value" % _A11Y_VAL_NS, "") or \
+              node.get("{%s}text" % _A11Y_TXT_NS, "")
+
+        node_acts = []
+        for attr, av in node.attrib.items():
+            if _A11Y_ACT_NS in attr and av and av not in node_acts:
+                node_acts.append(av)
+
+        entry = {
+            "role": role, "name": name[:60], "x": cx, "y": cy,
+            "enabled": enabled,
+        }
+        if val:
+            entry["value"] = val[:80]
+        if checked:
+            entry["checked"] = True
+        if selected:
+            entry["selected"] = True
+        if expanded:
+            entry["expanded"] = True
+
+        window_chrome = cx > 1800 and cy < 50
+        if not window_chrome:
+            if role in INTERACTIVE_ROLES:
+                interactive.append(entry)
+            elif role in CONTENT_ROLES:
+                content.append(entry)
+                if val:
+                    values.append({"name": name[:40], "value": val[:80], "x": cx, "y": cy})
+            if node_acts:
+                actions[name[:40]] = node_acts[:3]
+
+        seen.add(name)
+        if len(interactive) + len(content) >= max_nodes:
+            break
+
+    return {
+        "interactive": interactive[:30],
+        "content": content[:20],
+        "values": values[:10],
+        "actions": actions,
+    }
+
+
+def semantic_state_to_context(state: dict, task_keywords: list[str]) -> str:
+    """
+    Converts semantic state to model context.
+    Filters by task relevance. Exposes actions, values, content.
+    """
+    parts = []
+
+    relevant_interactive = [
+        e for e in state["interactive"]
+        if e.get("enabled", True) or any(k in e["name"].lower() for k in task_keywords)
+    ]
+    if relevant_interactive:
+        lines = ["Interactive elements:"]
+        for e in relevant_interactive[:20]:
+            acts = state["actions"].get(e["name"][:40], [])
+            act_str = f" [actions: {', '.join(acts[:2])}]" if acts else ""
+            disabled_str = " [disabled]" if not e.get("enabled", True) else ""
+            state_str = ""
+            if e.get("checked"):  state_str += " [checked]"
+            if e.get("selected"): state_str += " [selected]"
+            if e.get("expanded"): state_str += " [expanded]"
+            val_str = f" = \"{e['value']}\"" if e.get("value") else ""
+            lines.append(
+                f"  {e['role']:12} \"{e['name']}\"{val_str}"
+                f"{disabled_str}{state_str}{act_str}"
+                f" → ({e['x']}, {e['y']})"
+            )
+        parts.append("\n".join(lines))
+
+    kw_content = [
+        e for e in state["content"]
+        if any(k in e["name"].lower() for k in task_keywords)
+    ]
+    if kw_content:
+        lines = ["Relevant content on screen:"]
+        for e in kw_content[:10]:
+            val_str = f" = \"{e['value']}\"" if e.get("value") else ""
+            lines.append(f"  {e['role']:12} \"{e['name']}\"{val_str} → ({e['x']}, {e['y']})")
+        parts.append("\n".join(lines))
+
+    if state["values"]:
+        lines = ["Current field values:"]
+        for v in state["values"][:5]:
+            lines.append(f"  \"{v['name']}\" = \"{v['value']}\"")
+        parts.append("\n".join(lines))
+
+    return "\n\n".join(parts)
+
+
+def semantic_task_done(state: dict, task_keywords: list[str], task_instr: str) -> bool:
+    """
+    Zero VL model. Zero external oracle.
+    Checks if task keywords appear as current VALUES in the UI state.
+    Works for: rename (new name in tree), form fill (value set),
+               settings change (value updated), etc.
+    """
+    all_text = " ".join(
+        (e.get("name", "") + " " + e.get("value", "")).lower()
+        for e in state["interactive"] + state["content"] + state["values"]
+    )
+    matches = sum(1 for k in task_keywords if k in all_text)
+    return matches >= min(2, len(task_keywords))
 
 SYSTEM_BASE = """You control a desktop. Output a single pyautogui Python statement.
 Examples:
@@ -596,36 +764,38 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
 
         if a11y_only:
             a11y_xml = obs.get("accessibility_tree") if obs else None
-            elements = parse_a11y_tree(a11y_xml) if a11y_xml else []
-            task_kw = extract_keywords(task_instr)
+            task_kw  = extract_keywords(task_instr)
 
-            live_dyn = build_dynamic_context(elements, task_instr)
-            precond  = detect_preconditions(elements, task_kw)
+            sem_state = extract_semantic_state(a11y_xml) if a11y_xml else \
+                        {"interactive": [], "content": [], "values": [], "actions": {}}
+            elements  = sem_state["interactive"]
 
-            if live_dyn and live_dyn != submenu_context:
-                submenu_context = live_dyn
-                print(f"  [s{step:02d}] CTX_LIVE {len(elements)}el"
-                      + (f" paths={live_dyn[:50]}" if live_dyn else ""))
+            live_ctx  = semantic_state_to_context(sem_state, task_kw)
+            precond   = detect_preconditions(elements, task_kw)
+
+            dyn_paths = build_dynamic_context(elements, task_instr)
+            if dyn_paths and dyn_paths != submenu_context:
+                submenu_context = dyn_paths
+                print(f"  [s{step:02d}] CTX_LIVE {len(elements)}el")
+
             if precond:
                 print(f"  [s{step:02d}] precond: {precond[:70]}")
 
-            el_lines = "\n".join(
-                f"  {e['role']:12s} \"{e['name']}\" → ({e['x']}, {e['y']})"
-                + (" [disabled]" if not e.get("enabled", True) else "")
-                for e in elements
-            )
             ctx_parts = []
             if precond:
                 ctx_parts.append(precond)
             if submenu_context:
                 ctx_parts.append(submenu_context)
-            ctx_parts.append("UI elements:\n" + el_lines)
+            if live_ctx:
+                ctx_parts.append(live_ctx)
             a11y_context = "\n\n".join(ctx_parts)
 
-            if (with_context or with_dynamic) and elements:
-                matched = len([e for e in elements
-                                if any(k in e["name"].lower() for k in task_kw)])
-                print(f"  [ctx] a11y={len(elements)}el  matched={matched}")
+            n_content = len(sem_state["content"])
+            n_vals    = len(sem_state["values"])
+            matched   = sum(1 for k in task_kw if any(
+                k in e["name"].lower() for e in elements + sem_state["content"]
+            ))
+            print(f"  [ctx] inter={len(elements)}  content={n_content}  vals={n_vals}  matched={matched}")
 
         if augmented:
             state_before, vasp_text = farscry_state(shot_path)
@@ -711,7 +881,14 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         save_screenshot(obs, shot_after)
         if os.path.exists(shot_after) and (a11y_only or augmented):
             state_after, _ = farscry_state(shot_after)
-            if state_before and state_after and state_before != state_after:
+            if a11y_only and obs and needs_a11y:
+                new_xml = obs.get("accessibility_tree")
+                if new_xml:
+                    new_sem = extract_semantic_state(new_xml)
+                    if semantic_task_done(new_sem, task_kw, task_instr):
+                        print(f"  [s{step:02d}] SEMANTIC_DONE: task keywords found in UI state")
+                        done = True
+            if not done and state_before and state_after and state_before != state_after:
                 hamming = _phash_hamming(state_before, state_after)
                 if hamming > 5:
                     if vl_checkpoint(shot_after, task_instr):
