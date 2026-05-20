@@ -254,38 +254,41 @@ def main():
     tasks = json.loads(args.tasks.read_text())[:args.n]
     print(f"mode={args.mode}  augmented={augmented}  n={len(tasks)}")
 
+    print("Starting DesktopEnv (one container for all tasks)...")
+    env = DesktopEnv(
+        path_to_vm=args.vm_path,
+        provider_name=args.provider,
+        action_space="pyautogui",
+        require_a11y_tree=False,
+        headless=True,
+    )
+    print("DesktopEnv ready.")
+
     results = []
-    for task in tasks:
-        task_id = task["id"]
-        task_instr = task["instruction"]
-        config_path = task.get("config_path", "")
-        task_config = json.loads(Path(config_path).read_text()) if config_path and Path(config_path).exists() else {}
+    try:
+        for task in tasks:
+            task_id = task["id"]
+            task_instr = task["instruction"]
+            config_path = task.get("config_path", "")
+            task_config = json.loads(Path(config_path).read_text()) if config_path and Path(config_path).exists() else {}
 
-        print(f"\n--- {task_id}: {task_instr[:70]}")
+            print(f"\n--- {task_id}: {task_instr[:70]}")
 
-        env = DesktopEnv(
-            path_to_vm=args.vm_path,
-            provider_name=args.provider,
-            action_space="pyautogui",
-            require_a11y_tree=False,
-            headless=True,
-        )
-
-        try:
-            r = run_task(env, task_id, task_instr, task_config,
-                         max_steps=args.max_steps, augmented=augmented,
-                         out_dir=args.result_dir)
-            results.append(r)
-            status = "PASS" if r["passed"] else "FAIL"
-            print(f"    {status}  score={r['score']:.2f}  steps={r['steps']}  max_csf={r['max_consecutive_sf']}")
-        except Exception as e:
-            print(f"    ERROR: {e}")
-            results.append({"task_id": task_id, "score": 0.0, "passed": False, "error": str(e)})
-        finally:
             try:
-                env.close()
-            except Exception:
-                pass
+                r = run_task(env, task_id, task_instr, task_config,
+                             max_steps=args.max_steps, augmented=augmented,
+                             out_dir=args.result_dir)
+                results.append(r)
+                status = "PASS" if r["passed"] else "FAIL"
+                print(f"    {status}  score={r['score']:.2f}  steps={r['steps']}  max_csf={r['max_consecutive_sf']}")
+            except Exception as e:
+                print(f"    ERROR: {e}")
+                results.append({"task_id": task_id, "score": 0.0, "passed": False, "error": str(e)})
+    finally:
+        try:
+            env.close()
+        except Exception:
+            pass
 
     n = len(results)
     n_pass = sum(1 for r in results if r.get("passed", False))
