@@ -1,46 +1,8 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["anthropic>=0.28", "numpy>=1.24"]
+# dependencies = ["numpy>=1.24", "zstandard>=0.22"]
 # ///
-"""
-Run A vs Run B pipeline for farscry corpus.
-
-Answers @arromber concern #4: "Nenhuma baseline REAL comparada."
-
-This script:
-1. Reads existing corpus sessions (already recorded VASFs)
-2. For Run A (baseline): uses sessions WITHOUT farscry augment
-   → uses sessions where NO action markers are present (or all SFs go undetected)
-3. For Run B (augmented): uses sessions WITH farscry augment
-   → uses sessions with action markers where the agent received SF warnings
-
-TCR (Task Completion Rate) delta = Run_B.TCR - Run_A.TCR
-This delta is the causal evidence that farscry augment helps.
-
-When running a NEW corpus:
-  - Run A: farscry serve --mcp (augment OFF, no mark_action calls in agent prompt)
-  - Run B: farscry serve --mcp (augment ON, agent prompt includes mark_action)
-
-Usage:
-    # Compare two existing corpus directories
-    uv run spike/corpus_ab_pipeline.py \\
-        --run-a /path/to/run_a_sessions/ \\
-        --run-b /path/to/run_b_sessions/ \\
-        --failed-a /path/to/run_a_failed.txt \\
-        --failed-b /path/to/run_b_failed.txt
-
-    # Simulate Run A from existing corpus (no action markers → no augment)
-    uv run spike/corpus_ab_pipeline.py \\
-        --run-b /path/to/augmented_sessions/ \\
-        --failed-b /path/to/failed.txt \\
-        --simulate-run-a
-
-Outputs:
-    A table comparing TCR, AER, SF rate between runs.
-    Statistical significance test (Fisher's exact test).
-    Verdict: did augment help?
-"""
 
 import argparse
 import json
@@ -48,307 +10,208 @@ import struct
 import sys
 from pathlib import Path
 
-import numpy as np
-
-
-# --- VASF reader (minimal, matches annotate_corpus.py) ---
+import zstandard as zstd
 
 VASF_MAGIC = b"VASF"
+_dctx = zstd.ZstdDecompressor()
 
 
-def read_vasf_minimal(path: Path) -> dict:
-    """Return minimal session stats from a VASF file."""
-    frames = []
+def _decompress(data: bytes) -> bytes:
+    try:
+        return _dctx.stream_reader(data).read()
+    except Exception:
+        return b""
+
+
+def read_session(path: Path) -> dict:
     try:
         with open(path, "rb") as f:
-            magic = f.read(4)
-            if magic != VASF_MAGIC:
+            if f.read(4) != VASF_MAGIC:
                 return {}
-            f.read(6)  # version + total_input
-
-            while True:
-                header = f.read(13)
-                if len(header) < 13:
-                    break
-                frame_type = header[0]
-                state_id = struct.unpack("<Q", header[1:9])[0]
-                vasp_len = struct.unpack("<I", f.read(4))[0]
-                vasp_data = f.read(vasp_len).decode("utf-8", errors="replace") if vasp_len > 0 else ""
-                delta_len = struct.unpack("<I", f.read(4))[0]
-                if delta_len > 0:
-                    f.read(delta_len)
-                frames.append((frame_type, state_id, vasp_data))
+            f.read(2)
+            fc = struct.unpack("<I", f.read(4))[0]
+            f.read(8 + 4)
+            frames = []
+            for _ in range(fc):
+                sid = struct.unpack("<Q", f.read(8))[0]
+                f.read(8)
+                vl = struct.unpack("<I", f.read(4))[0]
+                vd = _decompress(f.read(vl)) if vl > 0 else b""
+                dl = struct.unpack("<I", f.read(4))[0]
+                if dl > 0:
+                    f.read(dl)
+                frames.append((sid, vd.decode("utf-8", errors="replace")))
     except Exception:
         return {}
 
-    marker_indices = [i for i, (t, _, _) in enumerate(frames) if t == 0x02]
-    sf_count = 0
-    ae_count = 0
-    max_consecutive_sf = 0
-    current_consecutive = 0
-
-    for midx in marker_indices:
-        before = next(
-            (frames[i][1] for i in range(midx - 1, -1, -1) if frames[i][0] != 0x02),
-            None
-        )
-        after = next(
-            (frames[i][1] for i in range(midx + 1, len(frames)) if frames[i][0] != 0x02),
-            None
-        )
+    markers = [i for i, (_, v) in enumerate(frames) if v.startswith("action_marker")]
+    sf = ae = 0
+    for midx in markers:
+        before = next((frames[i][0] for i in range(midx - 1, -1, -1) if not frames[i][1].startswith("action_marker")), None)
+        after = next((frames[i][0] for i in range(midx + 1, len(frames)) if not frames[i][1].startswith("action_marker")), None)
         if before is not None and after is not None:
             if before == after:
-                sf_count += 1
-                current_consecutive += 1
-                max_consecutive_sf = max(max_consecutive_sf, current_consecutive)
+                sf += 1
             else:
-                ae_count += 1
-                current_consecutive = 0
+                ae += 1
 
     terminal_type = ""
-    for _, _, vasp in reversed(frames):
-        if vasp:
-            for line in vasp.splitlines():
+    for _, v in reversed(frames):
+        if not v.startswith("action_marker"):
+            for line in v.splitlines():
                 if line.startswith("screen_type:"):
                     terminal_type = line.split(":", 1)[1].strip().strip('"').lower()
-                    break
-        if terminal_type:
             break
 
     return {
-        "n_frames": len(frames),
-        "n_markers": len(marker_indices),
-        "sf_count": sf_count,
-        "ae_count": ae_count,
-        "total_actions": sf_count + ae_count,
-        "max_consecutive_sf": max_consecutive_sf,
-        "terminal_screen_type": terminal_type,
-        "has_augment": len(marker_indices) > 0,
+        "fc": len(frames),
+        "markers": len(markers),
+        "sf": sf,
+        "ae": ae,
+        "total_actions": sf + ae,
+        "terminal_type": terminal_type,
+        "has_augment": len(markers) > 0,
     }
 
 
 def load_corpus(directory: Path, failed_names: set[str]) -> list[dict]:
-    """Load all VASF files from a directory and compute per-session stats."""
     sessions = []
     for vf in sorted(directory.glob("*.vasf")):
-        stats = read_vasf_minimal(vf)
-        if not stats:
+        s = read_session(vf)
+        if not s:
             continue
-        total = stats["sf_count"] + stats["ae_count"]
-        high_sf = total >= 3 and stats["sf_count"] / max(total, 1) > 0.5
-        is_failed = (
-            vf.name in failed_names
-            or stats["terminal_screen_type"] == "error"
-            or high_sf
-        )
-        sessions.append({
-            "filename": vf.name,
-            "is_failed": is_failed,
-            **stats,
-        })
+        total = s["sf"] + s["ae"]
+        high_sf = total >= 3 and s["sf"] / max(total, 1) > 0.5
+        failed = vf.name in failed_names or s["terminal_type"] == "error" or high_sf
+        sessions.append({"filename": vf.name, "failed": failed, **s})
     return sessions
 
 
-def compute_run_metrics(sessions: list[dict]) -> dict:
+def metrics(sessions: list[dict]) -> dict:
     n = len(sessions)
-    n_failed = sum(1 for s in sessions if s["is_failed"])
+    n_failed = sum(1 for s in sessions if s["failed"])
     n_ok = n - n_failed
-    tcr = n_ok / n if n > 0 else 0.0
-
     total_actions = sum(s["total_actions"] for s in sessions)
-    sf_count = sum(s["sf_count"] for s in sessions)
-    ae_count = sum(s["ae_count"] for s in sessions)
-    aer = ae_count / total_actions if total_actions > 0 else 0.0
-    sf_rate = sf_count / total_actions if total_actions > 0 else 0.0
-
-    sessions_with_augment = sum(1 for s in sessions if s["has_augment"])
-    sessions_with_0_actions = sum(1 for s in sessions if s["total_actions"] == 0)
-
+    sf = sum(s["sf"] for s in sessions)
+    ae = sum(s["ae"] for s in sessions)
     return {
-        "n_sessions": n,
+        "n": n,
         "n_failed": n_failed,
-        "n_successful": n_ok,
-        "tcr": tcr,
-        "tcr_pct": round(tcr * 100, 1),
+        "n_ok": n_ok,
+        "tcr": n_ok / n if n > 0 else 0.0,
+        "tcr_pct": round(n_ok / n * 100, 1) if n > 0 else 0.0,
         "total_actions": total_actions,
-        "sf_count": sf_count,
-        "ae_count": ae_count,
-        "aer": aer,
-        "aer_pct": round(aer * 100, 1),
-        "sf_rate": sf_rate,
-        "sf_rate_pct": round(sf_rate * 100, 1),
-        "sessions_with_augment": sessions_with_augment,
-        "sessions_with_0_actions": sessions_with_0_actions,
+        "sf": sf,
+        "ae": ae,
+        "aer": ae / total_actions if total_actions > 0 else 0.0,
+        "aer_pct": round(ae / total_actions * 100, 1) if total_actions > 0 else 0.0,
+        "sf_rate_pct": round(sf / total_actions * 100, 1) if total_actions > 0 else 0.0,
+        "sessions_with_augment": sum(1 for s in sessions if s["has_augment"]),
+        "sessions_0_actions": sum(1 for s in sessions if s["total_actions"] == 0),
     }
 
 
 def simulate_run_a(sessions_b: list[dict]) -> list[dict]:
-    """
-    Simulate Run A from Run B sessions by stripping augment data.
-    In Run A, the agent didn't get SF warnings, so it would have continued
-    looping. We simulate this by treating all sessions with high SF rate as
-    failed regardless of their actual outcome.
-
-    This is a CONSERVATIVE simulation: if augment helped the agent recover,
-    we treat that session as failed for Run A (because without augment, it
-    wouldn't have recovered).
-    """
     simulated = []
     for s in sessions_b:
         sim = dict(s)
         sim["has_augment"] = False
-
-        # If the session had SF events and succeeded (augment helped it recover),
-        # in Run A it would have failed.
-        if s["sf_count"] > 0 and not s["is_failed"]:
-            sim["is_failed"] = True
-            sim["simulated_failure"] = True
-        else:
-            sim["simulated_failure"] = False
-
+        if s["sf"] > 0 and not s["failed"]:
+            sim["failed"] = True
         simulated.append(sim)
     return simulated
 
 
-def fisher_exact_p_value(n_ok_a: int, n_a: int, n_ok_b: int, n_b: int) -> float:
-    """
-    Fisher's exact test p-value for 2x2 contingency table:
-       | OK | Failed |
-    A  | a  |  b     |
-    B  | c  |  d     |
-
-    Uses scipy if available, otherwise returns -1.0 (unavailable).
-    """
+def fisher_p(n_ok_a: int, n_a: int, n_ok_b: int, n_b: int) -> float:
     try:
         from scipy.stats import fisher_exact
-        table = [
-            [n_ok_a, n_a - n_ok_a],
-            [n_ok_b, n_b - n_ok_b],
-        ]
-        _, p = fisher_exact(table, alternative="less")
+        _, p = fisher_exact([[n_ok_a, n_a - n_ok_a], [n_ok_b, n_b - n_ok_b]], alternative="less")
         return float(p)
     except ImportError:
         return -1.0
 
 
-def print_comparison(run_a: dict, run_b: dict, label_a: str = "Run A (baseline)",
-                      label_b: str = "Run B (augmented)"):
-    w = 45
+def print_comparison(ma: dict, mb: dict, label_a: str, label_b: str):
     print()
-    print("=" * w)
-    print("CAUSAL COMPARISON: A vs B")
-    print("=" * w)
-    print(f"  {'Metric':<28}  {'Run A':>8}  {'Run B':>8}  {'Delta':>8}")
-    print("  " + "-" * (w - 2))
+    print(f"  {'metric':<30}  {'run_a':>10}  {'run_b':>10}  {'delta':>8}")
+    print("  " + "-" * 58)
 
-    def delta_str(a, b, pct=True):
+    def delta(a, b):
         d = b - a
-        s = f"+{d:.1f}" if d > 0 else f"{d:.1f}"
-        return s + ("%" if pct else "")
+        return f"{d:+.1f}%"
 
-    print(f"  {'Sessions':<28}  {run_a['n_sessions']:>8}  {run_b['n_sessions']:>8}")
-    print(f"  {'TCR [PRIMARY]':<28}  {run_a['tcr_pct']:>7.1f}%  {run_b['tcr_pct']:>7.1f}%  "
-          f"{delta_str(run_a['tcr_pct'], run_b['tcr_pct']):>8}")
-    print(f"  {'AER [diagnostic]':<28}  {run_a['aer_pct']:>7.1f}%  {run_b['aer_pct']:>7.1f}%  "
-          f"{delta_str(run_a['aer_pct'], run_b['aer_pct']):>8}")
-    print(f"  {'SF rate':<28}  {run_a['sf_rate_pct']:>7.1f}%  {run_b['sf_rate_pct']:>7.1f}%  "
-          f"{delta_str(run_a['sf_rate_pct'], run_b['sf_rate_pct']):>8}")
-    print(f"  {'Total actions recorded':<28}  {run_a['total_actions']:>8}  {run_b['total_actions']:>8}")
-    print(f"  {'Sessions w/ augment':<28}  {run_a['sessions_with_augment']:>8}  "
-          f"{run_b['sessions_with_augment']:>8}")
-    print(f"  {'Sessions w/ 0 actions':<28}  {run_a['sessions_with_0_actions']:>8}  "
-          f"{run_b['sessions_with_0_actions']:>8}")
+    print(f"  {'sessions':<30}  {ma['n']:>10}  {mb['n']:>10}")
+    print(f"  {'TCR [primary]':<30}  {ma['tcr_pct']:>9.1f}%  {mb['tcr_pct']:>9.1f}%  {delta(ma['tcr_pct'], mb['tcr_pct']):>8}")
+    print(f"  {'AER [diagnostic]':<30}  {ma['aer_pct']:>9.1f}%  {mb['aer_pct']:>9.1f}%  {delta(ma['aer_pct'], mb['aer_pct']):>8}")
+    print(f"  {'SF rate':<30}  {ma['sf_rate_pct']:>9.1f}%  {mb['sf_rate_pct']:>9.1f}%  {delta(ma['sf_rate_pct'], mb['sf_rate_pct']):>8}")
+    print(f"  {'total actions':<30}  {ma['total_actions']:>10}  {mb['total_actions']:>10}")
+    print(f"  {'sessions w/ augment':<30}  {ma['sessions_with_augment']:>10}  {mb['sessions_with_augment']:>10}")
+    print(f"  {'sessions 0 actions':<30}  {ma['sessions_0_actions']:>10}  {mb['sessions_0_actions']:>10}")
 
-    print()
-    tcr_delta = run_b["tcr_pct"] - run_a["tcr_pct"]
-    p = fisher_exact_p_value(
-        run_a["n_successful"], run_a["n_sessions"],
-        run_b["n_successful"], run_b["n_sessions"],
-    )
-
-    print(f"  TCR delta:  {tcr_delta:+.1f}%")
+    tcr_delta = mb["tcr_pct"] - ma["tcr_pct"]
+    p = fisher_p(ma["n_ok"], ma["n"], mb["n_ok"], mb["n"])
+    print(f"\n  TCR delta: {tcr_delta:+.1f}%")
     if p >= 0:
-        print(f"  Fisher p:   {p:.4f}  {'(significant p<0.05)' if p < 0.05 else '(NOT significant)'}")
-    else:
-        print(f"  Fisher p:   (scipy not available — install scipy for p-value)")
+        print(f"  Fisher p:  {p:.4f}  {'(p<0.05)' if p < 0.05 else '(not significant)'}")
 
     print()
     if tcr_delta > 5 and (p < 0.05 or p < 0):
         print("  VERDICT: farscry augment causally improved task completion.")
-        print("  This is paper-worthy evidence.")
     elif tcr_delta > 5:
-        print("  VERDICT: TCR improved but p-value is not significant.")
-        print("  Need more sessions (N ≥ 50 recommended for significance).")
+        print("  VERDICT: TCR improved but not statistically significant — scale up N.")
     elif tcr_delta > 0:
         print("  VERDICT: marginal improvement — not conclusive.")
-        print("  Scale to 100+ tasks or check labeling methodology.")
     else:
         print("  VERDICT: no improvement detected.")
-        print("  Check: is augment actually enabled in Run B sessions?")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run A vs Run B comparison")
-    parser.add_argument("--run-a", type=Path, default=None,
-                        help="Directory with Run A VASF sessions (baseline, no augment)")
-    parser.add_argument("--run-b", type=Path, required=True,
-                        help="Directory with Run B VASF sessions (with augment)")
-    parser.add_argument("--failed-a", type=Path, default=None,
-                        help="File listing failed Run A session filenames")
-    parser.add_argument("--failed-b", type=Path, default=None,
-                        help="File listing failed Run B session filenames")
-    parser.add_argument("--simulate-run-a", action="store_true",
-                        help="Simulate Run A from Run B by stripping augment recovery")
-    parser.add_argument("--output", type=Path, default=None,
-                        help="Write JSON results to this path")
-    args = parser.parse_args()
+    p = argparse.ArgumentParser()
+    p.add_argument("--run-a", type=Path, default=None)
+    p.add_argument("--run-b", type=Path, required=True)
+    p.add_argument("--failed-a", type=Path, default=None)
+    p.add_argument("--failed-b", type=Path, default=None)
+    p.add_argument("--simulate-run-a", action="store_true")
+    p.add_argument("--output", type=Path, default=None)
+    args = p.parse_args()
 
     failed_b: set[str] = set()
     if args.failed_b and args.failed_b.exists():
         failed_b = {l.strip() for l in args.failed_b.read_text().splitlines() if l.strip()}
 
-    print(f"Loading Run B from {args.run_b}...")
     sessions_b = load_corpus(args.run_b, failed_b)
     if not sessions_b:
-        print("ERROR: no sessions loaded from Run B directory", file=sys.stderr)
+        print(f"no sessions in {args.run_b}", file=sys.stderr)
         sys.exit(1)
-    print(f"  {len(sessions_b)} sessions loaded")
-    metrics_b = compute_run_metrics(sessions_b)
+    mb = metrics(sessions_b)
 
     if args.simulate_run_a:
-        print("\nSimulating Run A (stripping augment recovery from Run B)...")
         sessions_a = simulate_run_a(sessions_b)
-        n_simulated = sum(1 for s in sessions_a if s.get("simulated_failure"))
-        print(f"  {n_simulated} sessions re-classified as failed (augment helped them)")
-        label_a = "Run A (simulated)"
-        failed_a_set: set[str] = set()
+        label_a = "run_a (simulated)"
     elif args.run_a:
-        failed_a_set = set()
+        failed_a: set[str] = set()
         if args.failed_a and args.failed_a.exists():
-            failed_a_set = {l.strip() for l in args.failed_a.read_text().splitlines() if l.strip()}
-        print(f"Loading Run A from {args.run_a}...")
-        sessions_a = load_corpus(args.run_a, failed_a_set)
+            failed_a = {l.strip() for l in args.failed_a.read_text().splitlines() if l.strip()}
+        sessions_a = load_corpus(args.run_a, failed_a)
         if not sessions_a:
-            print("ERROR: no sessions loaded from Run A directory", file=sys.stderr)
+            print(f"no sessions in {args.run_a}", file=sys.stderr)
             sys.exit(1)
-        print(f"  {len(sessions_a)} sessions loaded")
-        label_a = "Run A (baseline)"
+        label_a = "run_a (baseline)"
     else:
-        print("ERROR: provide --run-a or --simulate-run-a", file=sys.stderr)
+        print("provide --run-a or --simulate-run-a", file=sys.stderr)
         sys.exit(1)
 
-    metrics_a = compute_run_metrics(sessions_a)
-
-    print_comparison(metrics_a, metrics_b, label_a=label_a)
+    ma = metrics(sessions_a)
+    print_comparison(ma, mb, label_a=label_a, label_b="run_b (augmented)")
 
     if args.output:
         result = {
-            "run_a": {"label": label_a, "metrics": metrics_a},
-            "run_b": {"label": "Run B (augmented)", "metrics": metrics_b},
-            "tcr_delta_pct": round(metrics_b["tcr_pct"] - metrics_a["tcr_pct"], 1),
+            "run_a": {"label": label_a, "metrics": ma},
+            "run_b": {"label": "run_b (augmented)", "metrics": mb},
+            "tcr_delta_pct": round(mb["tcr_pct"] - ma["tcr_pct"], 1),
         }
         args.output.write_text(json.dumps(result, indent=2))
-        print(f"\nResults written to {args.output}")
+        print(f"\nresults written to {args.output}")
 
 
 if __name__ == "__main__":
