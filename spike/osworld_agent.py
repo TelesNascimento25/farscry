@@ -136,10 +136,154 @@ def parse_a11y_tree(xml_str: str, max_items: int = 25) -> list[dict]:
     return result
 
 
-def format_a11y_context(elements: list[dict]) -> str:
+APP_CONTEXT = {
+    "libreoffice_writer": """\
+LibreOffice Writer — common operations:
+- Change text color: select text → Format → Character → Font Effects → Font Color
+- Select all: Ctrl+A. Select word: double-click. Select line: triple-click.
+- Find & Replace: Ctrl+H (supports regex for bulk changes)
+- Run macro for bulk ops: Tools → Macros → Organize Basic Macros
+- Bold/Italic/Underline: Ctrl+B / Ctrl+I / Ctrl+U
+- Save: Ctrl+S. Save as: Ctrl+Shift+S.""",
+
+    "libreoffice_calc": """\
+LibreOffice Calc — common operations:
+- Format cell: right-click → Format Cells
+- Enter formula: click cell → type = then formula (e.g. =SUM(A1:A10))
+- Select range: click first cell → Shift+click last
+- Sort: select range → Data → Sort
+- AutoFill: drag bottom-right corner of cell
+- Save: Ctrl+S.""",
+
+    "libreoffice_impress": """\
+LibreOffice Impress — common operations:
+- Add slide: right-click panel → Insert Slide
+- Edit text: double-click text box
+- Insert image: Insert → Image
+- Slide layout: Slide → Layout
+- Export to PDF/video: File → Export As
+- Save: Ctrl+S.""",
+
+    "vs_code": """\
+VS Code — common operations:
+- Open file: Ctrl+P → type filename
+- Open folder: File → Open Folder (or drag folder)
+- Command palette: Ctrl+Shift+P
+- Integrated terminal: Ctrl+backtick
+- Find in files: Ctrl+Shift+F
+- Go to line: Ctrl+G
+- Add to workspace: drag folder to explorer panel.""",
+
+    "thunderbird": """\
+Thunderbird — common operations:
+- Compose new email: Ctrl+N or click Write
+- Reply: Ctrl+R. Forward: Ctrl+L.
+- Attach file: Attach button or Insert → Attachment
+- Create folder: right-click account/folder → New Folder
+- Mark as read/unread: M key
+- Search emails: Ctrl+K.""",
+
+    "gimp": """\
+GIMP — common operations:
+- Open image: File → Open
+- Export/Save: File → Export As (use overwrite for same format)
+- Select region: R for rectangle, E for ellipse, F for free select
+- Fill selection: Shift+B (bucket fill) or Edit → Fill with FG Color
+- Change colors: Colors menu (Brightness, Hue, Levels)
+- Undo: Ctrl+Z. Redo: Ctrl+Y.""",
+}
+
+
+def get_app_context(elements: list[dict]) -> str:
+    names = " ".join(e["name"].lower() for e in elements)
+    if "writer" in names or ("libreoffice" in names and "calc" not in names and "impress" not in names):
+        return APP_CONTEXT["libreoffice_writer"]
+    if "calc" in names or "spreadsheet" in names:
+        return APP_CONTEXT["libreoffice_calc"]
+    if "impress" in names or "presentation" in names:
+        return APP_CONTEXT["libreoffice_impress"]
+    if "visual studio code" in names or "vscode" in names or "explorer" in names:
+        return APP_CONTEXT["vs_code"]
+    if "thunderbird" in names or "write:" in names or "inbox" in names:
+        return APP_CONTEXT["thunderbird"]
+    if "gimp" in names or "toolbox" in names:
+        return APP_CONTEXT["gimp"]
+    return ""
+
+
+_STOP = {"the","and","for","with","that","this","from","have","want","can","will",
+         "you","your","help","please","using","into","some","also","then","when"}
+
+def extract_keywords(task_text: str) -> list[str]:
+    words = _re.findall(r'\b[a-z]{4,}\b', task_text.lower())
+    seen: set[str] = set()
+    out = []
+    for w in words:
+        if w not in _STOP and w not in seen:
+            seen.add(w)
+            out.append(w)
+        if len(out) >= 12:
+            break
+    return out
+
+
+def build_dynamic_context(elements: list[dict], task_text: str) -> str:
     if not elements:
         return ""
-    lines = ["UI elements (role name → click coords):"]
+
+    keywords = extract_keywords(task_text)
+
+    MENU_ROLES = {"menu", "menuitem", "menu-item", "menubar", "push-button",
+                  "button", "toggle-button", "radio-button", "check-box",
+                  "combo-box", "tool-bar", "toolbar"}
+    interactive = [e for e in elements if e["role"] in MENU_ROLES]
+
+    seen_names: set[str] = set()
+    keyword_matches: list[dict] = []
+    for kw in keywords:
+        for el in interactive:
+            if kw in el["name"].lower() and el["name"] not in seen_names:
+                keyword_matches.append(el)
+                seen_names.add(el["name"])
+
+    menus = [e for e in interactive
+             if e["role"] in ("menu", "menuitem", "menu-item", "menubar")
+             and e["name"] not in seen_names][:8]
+
+    if not keyword_matches and not menus:
+        return ""
+
+    lines = ["Relevant paths derived from accessibility tree:"]
+    if keyword_matches:
+        lines.append("  Task-matched elements:")
+        for e in keyword_matches[:8]:
+            lines.append(f"    {e['role']:12} \"{e['name']}\" → ({e['x']}, {e['y']})")
+    if menus:
+        lines.append("  Available menus (explore for sub-options):")
+        for e in menus[:6]:
+            lines.append(f"    {e['role']:12} \"{e['name']}\" → ({e['x']}, {e['y']})")
+    return "\n".join(lines)
+
+
+def format_a11y_context(elements: list[dict],
+                        with_app_context: bool = False,
+                        with_dynamic_context: bool = False,
+                        task_text: str = "") -> str:
+    if not elements:
+        return ""
+    lines = []
+    if with_dynamic_context and task_text:
+        dyn = build_dynamic_context(elements, task_text)
+        if dyn:
+            lines.append(dyn)
+            lines.append("")
+    elif with_app_context:
+        app_ctx = get_app_context(elements)
+        if app_ctx:
+            lines.append("App procedures (HOW to use this app):")
+            lines.append(app_ctx)
+            lines.append("")
+    lines.append("UI elements (role → name → exact coords):")
     for e in elements:
         lines.append(f"  {e['role']:12s} \"{e['name']}\" → ({e['x']}, {e['y']})")
     return "\n".join(lines)
@@ -232,7 +376,8 @@ ESCAPE_LADDER = [
 
 def run_task(env, task_id: str, task_instr: str, task_config: dict,
              max_steps: int, augmented: bool, out_dir: Path,
-             a11y_only: bool = False) -> dict:
+             a11y_only: bool = False, with_context: bool = False,
+             with_dynamic: bool = False) -> dict:
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -262,7 +407,19 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         if a11y_only:
             a11y_xml = obs.get("accessibility_tree") if obs else None
             elements = parse_a11y_tree(a11y_xml) if a11y_xml else []
-            a11y_context = format_a11y_context(elements)
+            a11y_context = format_a11y_context(
+                elements,
+                with_app_context=with_context,
+                with_dynamic_context=with_dynamic,
+                task_text=task_instr,
+            )
+            if (with_context or with_dynamic) and elements:
+                kw = extract_keywords(task_instr) if with_dynamic else []
+                dyn = build_dynamic_context(elements, task_instr) if with_dynamic else ""
+                matched = len([e for e in elements
+                                if any(k in e["name"].lower() for k in kw)]) if kw else 0
+                label = "dynamic" if with_dynamic else "static"
+                print(f"  [ctx:{label}] a11y={len(elements)}el  kw={len(kw)}  matched={matched}")
 
         if augmented:
             state_before, vasp_text = farscry_state(shot_path)
@@ -399,7 +556,7 @@ def _state_bits(state_id: str) -> int:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--mode", choices=["run_a", "run_b_a11y", "run_b"], required=True)
+    p.add_argument("--mode", choices=["run_a", "run_b_a11y", "run_b_context", "run_b_dynamic", "run_b"], required=True)
     p.add_argument("--tasks", type=Path, required=True)
     p.add_argument("--n", type=int, default=30)
     p.add_argument("--max-steps", type=int, default=15)
@@ -411,9 +568,11 @@ def main():
 
     from desktop_env.desktop_env import DesktopEnv
 
-    augmented = args.mode == "run_b"
-    a11y_only = args.mode == "run_b_a11y"
-    needs_a11y = augmented or a11y_only
+    augmented    = args.mode == "run_b"
+    a11y_only    = args.mode in ("run_b_a11y", "run_b_context", "run_b_dynamic")
+    with_context = args.mode == "run_b_context"
+    with_dynamic = args.mode == "run_b_dynamic"
+    needs_a11y   = augmented or a11y_only
     args.result_dir.mkdir(parents=True, exist_ok=True)
 
     tasks = json.loads(args.tasks.read_text())[:args.n]
@@ -443,6 +602,8 @@ def main():
                 r = run_task(env, task_id, task_instr, task_config,
                              max_steps=args.max_steps,
                              augmented=augmented, a11y_only=a11y_only,
+                             with_context=with_context,
+                             with_dynamic=with_dynamic,
                              out_dir=args.result_dir)
                 results.append(r)
                 status = "PASS" if r["passed"] else "FAIL"
