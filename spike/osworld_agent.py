@@ -343,11 +343,12 @@ def explore_and_build_context(
             if a11y_xml:
                 sub_els = parse_a11y_tree(a11y_xml)
                 for item in sub_els:
-                    if item.get("y", 0) > 80 and item.get("name", "").strip():
+                    ix, iy = item.get("x", 0), item.get("y", 0)
+                    if iy > 80 and item.get("name", "").strip() and not (ix > 1800 and iy < 50):
                         name = item["name"].lower()
                         full_vocab[name] = (
                             f"{menu['name']} → {item['name']} "
-                            f"→ click({item['x']}, {item['y']})"
+                            f"→ click({ix}, {iy})"
                         )
             env.step("pyautogui.press('escape')", pause=0.2)
         except Exception:
@@ -598,31 +599,33 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             elements = parse_a11y_tree(a11y_xml) if a11y_xml else []
             task_kw = extract_keywords(task_instr)
 
-            precond = detect_preconditions(elements, task_kw)
+            live_dyn = build_dynamic_context(elements, task_instr)
+            precond  = detect_preconditions(elements, task_kw)
+
+            if live_dyn and live_dyn != submenu_context:
+                submenu_context = live_dyn
+                print(f"  [s{step:02d}] CTX_LIVE {len(elements)}el"
+                      + (f" paths={live_dyn[:50]}" if live_dyn else ""))
             if precond:
                 print(f"  [s{step:02d}] precond: {precond[:70]}")
 
-            if with_submenu and submenu_context:
-                el_lines = "\n".join(
-                    f"  {e['role']:12s} \"{e['name']}\" → ({e['x']}, {e['y']})"
-                    + (" [disabled]" if not e.get("enabled", True) else "")
-                    for e in elements
-                )
-                a11y_context = (precond + "\n\n" if precond else "") + submenu_context + "\n\nUI elements:\n" + el_lines
-            else:
-                base = format_a11y_context(
-                    elements,
-                    with_app_context=with_context,
-                    with_dynamic_context=with_dynamic,
-                    task_text=task_instr,
-                )
-                a11y_context = (precond + "\n\n" if precond else "") + base
-            if (with_context or with_dynamic) and elements and not with_submenu:
-                kw = task_kw if with_dynamic else []
+            el_lines = "\n".join(
+                f"  {e['role']:12s} \"{e['name']}\" → ({e['x']}, {e['y']})"
+                + (" [disabled]" if not e.get("enabled", True) else "")
+                for e in elements
+            )
+            ctx_parts = []
+            if precond:
+                ctx_parts.append(precond)
+            if submenu_context:
+                ctx_parts.append(submenu_context)
+            ctx_parts.append("UI elements:\n" + el_lines)
+            a11y_context = "\n\n".join(ctx_parts)
+
+            if (with_context or with_dynamic) and elements:
                 matched = len([e for e in elements
-                                if any(k in e["name"].lower() for k in kw)]) if kw else 0
-                label = "dynamic" if with_dynamic else "static"
-                print(f"  [ctx:{label}] a11y={len(elements)}el  kw={len(kw)}  matched={matched}")
+                                if any(k in e["name"].lower() for k in task_kw)])
+                print(f"  [ctx] a11y={len(elements)}el  matched={matched}")
 
         if augmented:
             state_before, vasp_text = farscry_state(shot_path)
@@ -714,23 +717,39 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                     if vl_checkpoint(shot_after, task_instr):
                         print(f"  [s{step:02d}] CHECKPOINT (Δ={hamming}): done → stopping early")
                         done = True
-                    elif (a11y_only or with_submenu) and obs and needs_a11y:
-                        a11y_xml = obs.get("accessibility_tree")
-                        if a11y_xml:
-                            new_els = parse_a11y_tree(a11y_xml)
+                    elif a11y_only and obs and needs_a11y:
+                        new_a11y_xml = obs.get("accessibility_tree")
+                        if new_a11y_xml:
+                            new_els = parse_a11y_tree(new_a11y_xml)
+                            prev_count = len(elements) if "elements" in dir() else 0
+                            new_dyn = build_dynamic_context(new_els, task_instr)
+                            new_precond = detect_preconditions(
+                                new_els, extract_keywords(task_instr)
+                            )
+                            updated = new_dyn or new_precond
+                            if updated:
+                                submenu_context = new_dyn
+                                if new_precond:
+                                    sf_feedback = new_precond
+                                print(
+                                    f"  [s{step:02d}] CTX_UPDATE Δ={hamming} "
+                                    f"{prev_count}→{len(new_els)}el"
+                                    + (f" precond={new_precond[:40]}" if new_precond else "")
+                                    + (f" paths={new_dyn[:40]}" if new_dyn else "")
+                                )
                             dialog_vocab = explore_dialogs(new_els, env, needs_a11y)
                             if dialog_vocab:
                                 kw = extract_keywords(task_instr)
-                                new_matches = [
+                                matches = [
                                     path for vname, path in dialog_vocab.items()
                                     if any(k in vname for k in kw)
                                 ]
-                                if new_matches:
-                                    extra = "\nDialog contents found:\n" + "\n".join(
-                                        f"  - {m}" for m in new_matches[:5]
+                                if matches:
+                                    extra = "\nDialog contents:\n" + "\n".join(
+                                        f"  - {m}" for m in matches[:5]
                                     )
-                                    a11y_context += extra
-                                    print(f"  [s{step:02d}] DIALOG explored: {len(new_matches)} matches")
+                                    submenu_context = (submenu_context or "") + extra
+                                    print(f"  [s{step:02d}] DIALOG {len(matches)} matches")
 
         if augmented:
             if os.path.exists(shot_after):
