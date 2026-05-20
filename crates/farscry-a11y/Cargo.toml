@@ -1,0 +1,28 @@
+[package]
+name = "farscry-a11y"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+farscry-core = { path = "../farscry-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+dirs = { workspace = true }
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio"] }
+libsqlite3-sys = { version = "0.27", features = ["bundled"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "macros", "rt-multi-thread"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+atspi = { version = "0.6", default-features = false, features = ["tokio"] }
+futures-lite = "2"

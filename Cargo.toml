@@ -8,6 +8,7 @@ members = [
     "crates/farscry-ocr-coreml",
     "crates/farscry-ocr-ort",
     "crates/farscry-ocr",
+    "crates/farscry-a11y",
     "crates/farscry",
 ]
 resolver = "2"
