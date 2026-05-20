@@ -155,20 +155,24 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             sf_frames.append((state_before, "state", vasp_text))
             sf_frames.append((None, "marker", ""))
 
+            if consecutive_sf >= 1:
+                recovery_actions = [
+                    "pyautogui.press('escape')",
+                    "pyautogui.scroll(960, 540, 3)",
+                    "pyautogui.hotkey('alt', 'Tab')",
+                ]
+                ridx = min(consecutive_sf - 1, len(recovery_actions) - 1)
+                recovery_action = recovery_actions[ridx]
+                print(f"    [augment] SF x{consecutive_sf} → injecting: {recovery_action}")
+                obs, _, _, _ = env.step(recovery_action, pause=1.5)
+                shot_path = str(out_dir / f"{session_id}-s{step:02d}r.png")
+                save_screenshot(obs, shot_path)
+                if os.path.exists(shot_path):
+                    state_before, vasp_text = farscry_state(shot_path)
+
         sf_feedback = ""
         if augmented and consecutive_sf >= 1:
-            last_action = history[-1]["content"] if history else "unknown"
-            recovery = (
-                "scroll to find the element, check window focus, or use a keyboard shortcut"
-                if consecutive_sf == 1 else
-                "try a menu-based approach or a completely different interaction path"
-                if consecutive_sf >= 3 else
-                "click to focus the window first, then retry with exact coordinates from VASP"
-            )
-            sf_feedback = (
-                f"SILENT_FAILURE x{consecutive_sf}: '{last_action}' had no visible effect on screen.\n"
-                f"Recovery: {recovery}."
-            )
+            sf_feedback = f"Previous action had no effect (x{consecutive_sf}). A recovery step was auto-applied. Act on the current screen state."
 
         raw = vl_call(shot_path, task_instr, history, vasp=vasp_text, sf_feedback=sf_feedback)
         history.append({"role": "assistant", "content": raw})
