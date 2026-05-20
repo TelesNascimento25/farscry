@@ -45,17 +45,74 @@ Output only the statement. Do not explain."""
 
 SYSTEM_AUG = SYSTEM_BASE + """
 
-Screen state (VASP) is provided as structured text with element positions and affordances.
-Use the VASP affordances to find exact coordinates before clicking.
+Screen state (VASP) is provided as structured text with element types and positions.
+A recovery action was automatically injected before this step — the screen state has changed.
+Act on the current screen. Do not repeat your last action."""
 
-When you see SILENT_FAILURE it means your last action produced no visible change.
-Recovery strategies (try in order):
-  1. Check VASP affordances — the element may be at different coordinates than expected
-  2. Scroll toward the target area: pyautogui.scroll(x, y, clicks=3)
-  3. Click to focus the window first, then retry
-  4. Use keyboard shortcut instead of clicking (e.g., hotkey('ctrl','s') instead of clicking Save)
-  5. Wait for loading: pyautogui.sleep(1) then retry
-  6. If 3+ consecutive failures, the task may require a completely different approach — try a menu item"""
+ZONE_COORDS = {
+    "top-left":      (320,  180), "top-center":    (960,  180), "top-right":     (1600, 180),
+    "middle-left":   (320,  540), "middle-center": (960,  540), "middle-right":  (1600, 540),
+    "bottom-left":   (320,  900), "bottom-center": (960,  900), "bottom-right":  (1600, 900),
+}
+
+import re as _re
+
+def parse_affordances(vasp_text: str) -> list[dict]:
+    results = []
+    in_aff = False
+    for line in vasp_text.splitlines():
+        if line.strip() == "affordances:":
+            in_aff = True
+            continue
+        if in_aff:
+            if not line.strip() or (not line.startswith(" ") and not line.startswith("\t")):
+                in_aff = False
+                continue
+            m = _re.search(r'(\w+)\s+[→>-]+\s*"([^"]*)"\s+at\s*\((\d+),\s*(\d+)\)', line)
+            if m:
+                results.append({"action": m.group(1), "label": m.group(2),
+                                 "x": int(m.group(3)), "y": int(m.group(4))})
+    return results
+
+def parse_zones(vasp_text: str) -> list[dict]:
+    results = []
+    for line in vasp_text.splitlines():
+        m = _re.match(r'\[+([^\]]+?)\]+\s+(\w+)\s+"([^"]*)"', line)
+        if m:
+            zone_raw = m.group(1).strip()
+            zone = _re.sub(r'\s+', '-', zone_raw.lower())
+            elem_type = m.group(2).lower()
+            label = m.group(3)
+            coords = None
+            for key, (cx, cy) in ZONE_COORDS.items():
+                if key in zone or zone in key:
+                    coords = (cx, cy)
+                    break
+            if coords and elem_type in ("button", "input", "link", "checkbox"):
+                results.append({"action": "click" if elem_type != "input" else "type",
+                                 "label": label, "x": coords[0], "y": coords[1],
+                                 "zone": zone, "source": "zone"})
+    return results
+
+def vasp_recovery_action(vasp_text: str, action_history: list[str]) -> str:
+    tried_coords = set()
+    for h in action_history[-6:]:
+        for x, y in _re.findall(r'\((\d+),\s*(\d+)\)', h):
+            tried_coords.add((int(x), int(y)))
+
+    affordances = parse_affordances(vasp_text)
+    if not affordances:
+        affordances = parse_zones(vasp_text)
+
+    for aff in affordances:
+        if (aff["x"], aff["y"]) not in tried_coords:
+            return f"pyautogui.click({aff['x']}, {aff['y']})"
+
+    if affordances:
+        aff = affordances[0]
+        return f"pyautogui.click({aff['x']}, {aff['y']})"
+
+    return "pyautogui.scroll(960, 540, 3)"
 
 
 def encode(path: str) -> str:
@@ -156,14 +213,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             sf_frames.append((None, "marker", ""))
 
             if consecutive_sf >= 1:
-                recovery_actions = [
-                    "pyautogui.press('escape')",
-                    "pyautogui.scroll(960, 540, 3)",
-                    "pyautogui.click(960, 540)",
-                ]
-                ridx = min(consecutive_sf - 1, len(recovery_actions) - 1)
-                recovery_action = recovery_actions[ridx]
-                print(f"    [augment] SF x{consecutive_sf} → injecting: {recovery_action}")
+                history_actions = [h["content"] for h in history if h.get("role") == "assistant"]
+                recovery_action = vasp_recovery_action(vasp_text, history_actions)
+                print(f"    [augment] SF x{consecutive_sf} → vasp_recovery: {recovery_action}")
                 obs, _, _, _ = env.step(recovery_action, pause=1.5)
                 shot_path = str(out_dir / f"{session_id}-s{step:02d}r.png")
                 save_screenshot(obs, shot_path)
@@ -172,8 +224,6 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 consecutive_sf = 0
 
         sf_feedback = ""
-        if augmented and consecutive_sf >= 1:
-            sf_feedback = f"Previous action had no effect (x{consecutive_sf}). A recovery step was auto-applied. Act on the current screen state."
 
         raw = vl_call(shot_path, task_instr, history, vasp=vasp_text, sf_feedback=sf_feedback)
         history.append({"role": "assistant", "content": raw})
