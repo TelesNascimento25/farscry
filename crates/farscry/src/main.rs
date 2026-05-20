@@ -327,7 +327,7 @@ async fn main() {
             if let Some(shell_pid) = unregister {
                 commands::daemon::unregister(shell_pid)
             } else {
-                commands::daemon::run_daemon()
+                commands::daemon::run_daemon().await
             }
         }
     };

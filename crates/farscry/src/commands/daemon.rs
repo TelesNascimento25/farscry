@@ -5,12 +5,13 @@ use chrono::Utc;
 use farscry_core::{vasf::VasfWriter, StateId};
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Write},
-    os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
     sync::{Arc, Mutex},
-    thread,
     time::Duration,
+};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::{UnixListener, UnixStream},
 };
 
 #[cfg(target_os = "macos")]
@@ -30,7 +31,7 @@ struct WindowEntry {
 
 type SharedState = Arc<Mutex<HashMap<u32, WindowEntry>>>;
 
-pub fn run_daemon() -> Result<()> {
+pub async fn run_daemon() -> Result<()> {
     #[cfg(all(unix, not(target_os = "macos")))]
     let _xvfb = crate::commands::record::ensure_display();
 
@@ -51,20 +52,27 @@ pub fn run_daemon() -> Result<()> {
     let state: SharedState = Arc::new(Mutex::new(HashMap::new()));
     let state_cap = state.clone();
 
-    let t_cap = thread::spawn(move || capture_loop(state_cap));
+    tokio::spawn(capture_task(state_cap));
 
     eprintln!("[farscry:daemon] started pid={}", std::process::id());
 
-    for s in listener.incoming().flatten() {
-        let st = state.clone();
-        thread::spawn(move || {
-            if let Err(e) = handle_client(s, st) {
-                eprintln!("[farscry:daemon] client error: {e}");
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                let st = state.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = handle_client(stream, st).await {
+                        eprintln!("[farscry:daemon] client error: {e}");
+                    }
+                });
             }
-        });
+            Err(e) => {
+                eprintln!("[farscry:daemon] accept error: {e}");
+                break;
+            }
+        }
     }
 
-    t_cap.join().ok();
     let _ = std::fs::remove_file(&sock_path);
     let _ = std::fs::remove_file(&pid_path);
     Ok(())
@@ -74,14 +82,15 @@ pub fn connect_and_register(shell_pid: u32) -> Result<()> {
     ensure_daemon_running()?;
 
     let sock_path = sock_path();
-    let mut stream =
-        UnixStream::connect(&sock_path).context("could not connect to farscry daemon")?;
+    let mut stream = std::os::unix::net::UnixStream::connect(&sock_path)
+        .context("could not connect to farscry daemon")?;
 
+    use std::io::{BufRead, Write};
     let msg = format!("REGISTER {shell_pid}\n");
     stream.write_all(msg.as_bytes())?;
 
     let mut resp = String::new();
-    BufReader::new(stream).read_line(&mut resp)?;
+    std::io::BufReader::new(stream).read_line(&mut resp)?;
 
     if resp.starts_with("OK ") {
         let tail = resp.trim().trim_start_matches("OK ");
@@ -95,20 +104,26 @@ pub fn connect_and_register(shell_pid: u32) -> Result<()> {
 
 pub fn unregister(shell_pid: u32) -> Result<()> {
     let sock_path = sock_path();
-    let Ok(mut stream) = UnixStream::connect(&sock_path) else {
+    let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&sock_path) else {
         return Ok(());
     };
+    use std::io::Write;
     let msg = format!("UNREGISTER {shell_pid}\n");
     stream.write_all(msg.as_bytes()).ok();
     Ok(())
 }
 
-fn handle_client(stream: UnixStream, state: SharedState) -> Result<()> {
-    let mut writer = stream.try_clone()?;
-    let reader = BufReader::new(stream);
+async fn handle_client(stream: UnixStream, state: SharedState) -> Result<()> {
+    let (read_half, mut write_half) = stream.into_split();
+    let mut reader = BufReader::new(read_half);
+    let mut line = String::new();
 
-    for line in reader.lines() {
-        let line = line?;
+    loop {
+        line.clear();
+        let n = reader.read_line(&mut line).await?;
+        if n == 0 {
+            break;
+        }
         let parts: Vec<&str> = line.trim().splitn(2, ' ').collect();
         match parts.as_slice() {
             ["REGISTER", pid_str] => {
@@ -116,24 +131,24 @@ fn handle_client(stream: UnixStream, state: SharedState) -> Result<()> {
                 match register(shell_pid, &state) {
                     Ok((wid, path)) => {
                         let resp = format!("OK {wid} {}\n", path.display());
-                        writer.write_all(resp.as_bytes())?;
+                        write_half.write_all(resp.as_bytes()).await?;
                     }
                     Err(e) => {
                         let resp = format!("ERR {e}\n");
-                        writer.write_all(resp.as_bytes())?;
+                        write_half.write_all(resp.as_bytes()).await?;
                     }
                 }
             }
             ["UNREGISTER", pid_str] => {
                 let shell_pid: u32 = pid_str.parse().unwrap_or(0);
                 drop_window(shell_pid, &state);
-                writer.write_all(b"OK\n")?;
+                write_half.write_all(b"OK\n").await?;
             }
             ["PING"] => {
-                writer.write_all(b"OK\n")?;
+                write_half.write_all(b"OK\n").await?;
             }
             _ => {
-                writer.write_all(b"ERR unknown command\n")?;
+                write_half.write_all(b"ERR unknown command\n").await?;
             }
         }
     }
@@ -177,7 +192,7 @@ fn drop_window(shell_pid: u32, state: &SharedState) {
     }
 }
 
-fn capture_loop(state: SharedState) {
+async fn capture_task(state: SharedState) {
     let threshold: u8 = 10;
     let mut idle_ticks: u32 = 0;
 
@@ -187,7 +202,7 @@ fn capture_loop(state: SharedState) {
     let _stream: Option<()> = None;
 
     loop {
-        thread::sleep(Duration::from_secs(1));
+        tokio::time::sleep(Duration::from_secs(1)).await;
 
         let mut guard = state.lock().unwrap();
         if guard.is_empty() {
@@ -280,13 +295,20 @@ fn pid_path() -> PathBuf {
 }
 
 fn ensure_daemon_running() -> Result<()> {
+    use std::{
+        io::{BufRead, Write},
+        thread,
+    };
+
     let sock_path = sock_path();
 
     if sock_path.exists() {
-        if let Ok(mut s) = UnixStream::connect(&sock_path) {
+        if let Ok(mut s) = std::os::unix::net::UnixStream::connect(&sock_path) {
             if s.write_all(b"PING\n").is_ok() {
                 let mut resp = String::new();
-                if BufReader::new(s).read_line(&mut resp).is_ok() && resp.starts_with("OK") {
+                if std::io::BufReader::new(s).read_line(&mut resp).is_ok()
+                    && resp.starts_with("OK")
+                {
                     return Ok(());
                 }
             }
@@ -305,10 +327,12 @@ fn ensure_daemon_running() -> Result<()> {
     for _ in 0..50 {
         thread::sleep(Duration::from_millis(100));
         if sock_path.exists() {
-            if let Ok(mut s) = UnixStream::connect(&sock_path) {
+            if let Ok(mut s) = std::os::unix::net::UnixStream::connect(&sock_path) {
                 s.write_all(b"PING\n").ok();
                 let mut resp = String::new();
-                if BufReader::new(s).read_line(&mut resp).is_ok() && resp.starts_with("OK") {
+                if std::io::BufReader::new(s).read_line(&mut resp).is_ok()
+                    && resp.starts_with("OK")
+                {
                     return Ok(());
                 }
             }
