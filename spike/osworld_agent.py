@@ -196,10 +196,13 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
     max_csf = 0
     consecutive_sf = 0
     state_before = ""
+    agent_step = 0
+    recovery_count = 0
 
     obs = env.reset(task_config=task_config)
 
-    for step in range(max_steps):
+    while agent_step < max_steps:
+        step = agent_step
         shot_path = str(out_dir / f"{session_id}-s{step:02d}.png")
         save_screenshot(obs, shot_path)
 
@@ -217,6 +220,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 recovery_action = vasp_recovery_action(vasp_text, history_actions)
                 print(f"    [augment] SF x{consecutive_sf} → vasp_recovery: {recovery_action}")
                 obs, _, _, _ = env.step(recovery_action, pause=1.5)
+                recovery_count += 1
                 shot_path = str(out_dir / f"{session_id}-s{step:02d}r.png")
                 save_screenshot(obs, shot_path)
                 if os.path.exists(shot_path):
@@ -240,6 +244,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             break
 
         obs, reward, done, info = env.step(action_str, pause=0.5)
+        agent_step += 1
 
         if augmented:
             shot_after = str(out_dir / f"{session_id}-s{step:02d}b.png")
@@ -265,7 +270,8 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         "task_id": task_id,
         "session_id": session_id,
         "augmented": augmented,
-        "steps": step + 1,
+        "steps": agent_step,
+        "recovery_injections": recovery_count,
         "score": score,
         "passed": score > 0.5,
         "max_consecutive_sf": max_csf,
