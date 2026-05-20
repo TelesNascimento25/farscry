@@ -60,13 +60,21 @@ Accessible UI elements are listed with exact coordinates. Use them for clicks.
 If you receive a [SILENT_FAILURE] warning, try a completely different action."""
 
 
-def parse_a11y_tree(xml_str: str, max_items: int = 30) -> list[dict]:
+def parse_a11y_tree(xml_str: str, max_items: int = 25) -> list[dict]:
     if not xml_str:
         return []
     try:
         root = ET.fromstring(xml_str)
     except ET.ParseError:
         return []
+
+    modal_names: set[str] = set()
+    for node in root.iter():
+        role = (node.tag.split("}")[-1] if "}" in node.tag else node.tag).lower()
+        if role in ("dialog", "alert", "file-chooser", "color-chooser", "font-chooser"):
+            name = (node.get("name") or "").strip()
+            if name:
+                modal_names.add(name)
 
     elements = []
     for node in root.iter():
@@ -97,19 +105,28 @@ def parse_a11y_tree(xml_str: str, max_items: int = 30) -> list[dict]:
             continue
 
         cx, cy = x + w // 2, y + h // 2
-        elements.append({"role": role, "name": name[:60], "x": cx, "y": cy})
+        elements.append({
+            "role": role, "name": name[:60],
+            "x": cx, "y": cy,
+            "in_modal": any(m in name for m in modal_names),
+        })
 
-        if len(elements) >= max_items * 3:
+        if len(elements) >= max_items * 5:
             break
+
+    if modal_names:
+        modal_els = [e for e in elements if e["in_modal"] and e["role"] in INTERACTIVE_ROLES]
+        if modal_els:
+            elements = modal_els
 
     interactive = [e for e in elements if e["role"] in INTERACTIVE_ROLES]
     if not interactive:
         interactive = elements
 
-    seen = set()
+    seen: set[tuple] = set()
     result = []
     for e in interactive:
-        key = (e["role"], e["name"][:30])
+        key = (e["role"], e["name"][:25])
         if key not in seen:
             seen.add(key)
             result.append(e)
@@ -217,6 +234,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
     sf_frames: list[tuple] = []
     max_csf = 0
     consecutive_sf = 0
+    total_escapes = 0
     state_before = ""
     agent_step = 0
     sf_feedback_count = 0
@@ -244,16 +262,16 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             a11y_context = format_a11y_context(elements)
 
             if consecutive_sf >= 1:
-                ladder_idx = min(consecutive_sf - 1, len(ESCAPE_LADDER) - 1)
-                escape_action = ESCAPE_LADDER[ladder_idx]
+                escape_action = ESCAPE_LADDER[min(total_escapes, len(ESCAPE_LADDER) - 1)]
 
-                if consecutive_sf == 3:
+                if total_escapes == 2:
                     history = history[-1:] if history else []
-                    print(f"    [augment] SF x{consecutive_sf} → history cleared")
+                    print(f"    [augment] SF total={total_escapes+1} → history cleared")
 
-                print(f"    [augment] SF x{consecutive_sf} → {escape_action}")
+                print(f"    [augment] SF x{consecutive_sf} total={total_escapes+1} → {escape_action}")
                 obs, _, _, _ = env.step(escape_action, pause=1.0)
                 sf_feedback_count += 1
+                total_escapes += 1
                 shot_path = str(out_dir / f"{session_id}-s{step:02d}r.png")
                 save_screenshot(obs, shot_path)
                 if os.path.exists(shot_path):
@@ -263,10 +281,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                     a11y_context = format_a11y_context(elements)
 
                 consecutive_sf = 0
-
                 sf_feedback = (
-                    f"[SILENT_FAILURE x{consecutive_sf + 1}] Screen unchanged. "
-                    f"An escape action was executed. Try a different approach."
+                    f"[SILENT_FAILURE] Screen was unchanged. Escape action executed. "
+                    f"Try something completely different."
                 )
 
         raw = vl_call(shot_path, task_instr, history,
