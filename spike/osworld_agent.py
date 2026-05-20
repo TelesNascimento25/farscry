@@ -771,7 +771,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
     obs = env.reset(task_config=task_config)
 
     initial_sem_names: set[str] = set()
-    prev_step_names:   set[str] = set()
+    ever_seen_names:   set[str] = set()
     if a11y_only and obs and needs_a11y:
         init_xml = obs.get("accessibility_tree")
         if init_xml:
@@ -780,7 +780,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 e.get("name", "").lower()
                 for e in init_sem["interactive"] + init_sem["content"]
             }
-            prev_step_names = set(initial_sem_names)
+            ever_seen_names = set(initial_sem_names)
 
     if with_submenu and obs:
         a11y_xml = obs.get("accessibility_tree")
@@ -823,18 +823,18 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 for e in elements + sem_state["content"]
                 if e.get("name", "").strip()
             }
-            new_since_prev = current_names - prev_step_names
+            truly_new = current_names - ever_seen_names
+            ever_seen_names |= current_names
             appeared_signal = ""
-            if new_since_prev and len(new_since_prev) >= 2:
-                new_labels = [n for n in new_since_prev if len(n) > 2][:6]
+            if truly_new and len(truly_new) >= 2:
+                new_labels = [n for n in truly_new if len(n) > 2][:6]
                 if new_labels:
                     appeared_signal = (
-                        f"⚡ NEW UI CONTEXT: These elements just appeared after your last action:\n"
+                        "⚡ NEW: These elements just appeared for the first time:\n"
                         + "\n".join(f"  - {n}" for n in new_labels)
-                        + "\nYou are in a new context. Interact with these new elements."
+                        + "\nNew context. Interact with these."
                     )
                     print(f"  [s{step:02d}] APPEARED: {new_labels[:3]}")
-            prev_step_names = current_names
 
             # SINAL 2 — elementos que o modelo ainda não tentou
             tried_names: set[str] = set()
