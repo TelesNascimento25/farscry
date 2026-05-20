@@ -290,6 +290,60 @@ def build_dynamic_context(elements: list[dict], task_text: str) -> str:
     return "\n".join(lines)
 
 
+def explore_and_build_context(
+    a11y_elements: list[dict], task_instr: str, env, needs_a11y: bool
+) -> str:
+    root_menus = [
+        e for e in a11y_elements
+        if e.get("role") in ("menu", "menuitem", "menu-item", "menubar")
+        and e.get("y", 999) < 80
+        and e.get("name", "").strip()
+    ]
+
+    full_vocab: dict[str, str] = {}
+
+    for menu in root_menus[:5]:
+        try:
+            obs_m, _, _, _ = env.step(
+                f"pyautogui.click({menu['x']}, {menu['y']})", pause=0.4
+            )
+            a11y_xml = obs_m.get("accessibility_tree") if (obs_m and needs_a11y) else None
+            if a11y_xml:
+                sub_els = parse_a11y_tree(a11y_xml)
+                for item in sub_els:
+                    if item.get("y", 0) > 80 and item.get("name", "").strip():
+                        name = item["name"].lower()
+                        full_vocab[name] = (
+                            f"{menu['name']} → {item['name']} "
+                            f"→ click({item['x']}, {item['y']})"
+                        )
+            env.step("pyautogui.press('escape')", pause=0.2)
+        except Exception:
+            continue
+
+    if not full_vocab:
+        return build_dynamic_context(a11y_elements, task_instr)
+
+    keywords = extract_keywords(task_instr)
+    matches: list[str] = []
+    seen: set[str] = set()
+    for kw in keywords:
+        for vname, path in full_vocab.items():
+            if kw in vname and path not in seen:
+                matches.append(path)
+                seen.add(path)
+
+    if not matches:
+        return ""
+
+    lines = ["Relevant paths found by exploring menus:"]
+    for path in matches[:6]:
+        lines.append(f"  - {path}")
+    lines.append("")
+    lines.append("Use these paths. Click menu items in order.")
+    return "\n".join(lines)
+
+
 def format_a11y_context(elements: list[dict],
                         with_app_context: bool = False,
                         with_dynamic_context: bool = False,
@@ -317,6 +371,26 @@ def format_a11y_context(elements: list[dict],
 def encode(path: str) -> str:
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode()
+
+
+def vl_checkpoint(screenshot_path: str, task: str, temperature: float = 0.0) -> bool:
+    messages = [
+        {"role": "system", "content": "Answer only YES or NO."},
+        {"role": "user", "content": [
+            {"type": "text", "text": f"Task: {task}\n\nHas this task been completed? YES or NO."},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encode(screenshot_path)}"}},
+        ]},
+    ]
+    try:
+        r = requests.post(f"{VL_SERVER}/v1/chat/completions",
+                          json={"model": "qwen2.5-vl", "messages": messages,
+                                "max_tokens": 5, "temperature": temperature},
+                          timeout=60)
+        r.raise_for_status()
+        answer = r.json()["choices"][0]["message"]["content"].strip().upper()
+        return answer.startswith("YES")
+    except Exception:
+        return False
 
 
 def vl_call(screenshot_path: str, task: str, history: list,
@@ -399,10 +473,18 @@ ESCAPE_LADDER = [
 ]
 
 
+def _parse_click_coords(action_str: str) -> tuple[int, int] | None:
+    m = _re.search(r'click\((\d+),\s*(\d+)\)', action_str)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None
+
+
 def run_task(env, task_id: str, task_instr: str, task_config: dict,
              max_steps: int, augmented: bool, out_dir: Path,
              a11y_only: bool = False, with_context: bool = False,
-             with_dynamic: bool = False) -> dict:
+             with_dynamic: bool = False, with_submenu: bool = False,
+             needs_a11y: bool = False) -> dict:
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -415,8 +497,19 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
     state_before = ""
     agent_step = 0
     sf_feedback_count = 0
+    action_coord_history: list[tuple[int, int]] = []
+    micro_loop_count = 0
+    submenu_context: str = ""
 
     obs = env.reset(task_config=task_config)
+
+    if with_submenu and obs:
+        a11y_xml = obs.get("accessibility_tree")
+        if a11y_xml:
+            init_els = parse_a11y_tree(a11y_xml)
+            submenu_context = explore_and_build_context(init_els, task_instr, env, needs_a11y)
+            if submenu_context:
+                print(f"  [submenu] built context: {len(submenu_context)} chars")
 
     while agent_step < max_steps:
         step = agent_step
@@ -432,15 +525,21 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         if a11y_only:
             a11y_xml = obs.get("accessibility_tree") if obs else None
             elements = parse_a11y_tree(a11y_xml) if a11y_xml else []
-            a11y_context = format_a11y_context(
-                elements,
-                with_app_context=with_context,
-                with_dynamic_context=with_dynamic,
-                task_text=task_instr,
-            )
-            if (with_context or with_dynamic) and elements:
+            if with_submenu and submenu_context:
+                el_lines = "\n".join(
+                    f"  {e['role']:12s} \"{e['name']}\" → ({e['x']}, {e['y']})"
+                    for e in elements
+                )
+                a11y_context = submenu_context + "\n\nUI elements:\n" + el_lines
+            else:
+                a11y_context = format_a11y_context(
+                    elements,
+                    with_app_context=with_context,
+                    with_dynamic_context=with_dynamic,
+                    task_text=task_instr,
+                )
+            if (with_context or with_dynamic) and elements and not with_submenu:
                 kw = extract_keywords(task_instr) if with_dynamic else []
-                dyn = build_dynamic_context(elements, task_instr) if with_dynamic else ""
                 matched = len([e for e in elements
                                 if any(k in e["name"].lower() for k in kw)]) if kw else 0
                 label = "dynamic" if with_dynamic else "static"
@@ -507,9 +606,33 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         obs, reward, done, info = env.step(action_str, pause=0.5)
         agent_step += 1
 
+        coords = _parse_click_coords(action_str)
+        if coords:
+            action_coord_history.append(coords)
+            if len(action_coord_history) >= 4:
+                recent = action_coord_history[-4:]
+                buckets = {(round(x / 10) * 10, round(y / 10) * 10) for x, y in recent}
+                if len(buckets) <= 2:
+                    micro_loop_count += 1
+                    if micro_loop_count >= 3 and not sf_feedback:
+                        sf_feedback = (
+                            "You are clicking the same 2 spots repeatedly. "
+                            "This is not working. Try a completely different approach."
+                        )
+                        print(f"  [s{step:02d}] MICRO-LOOP detected → injecting hint")
+                else:
+                    micro_loop_count = 0
+
+        shot_after = str(out_dir / f"{session_id}-s{step:02d}b.png")
+        save_screenshot(obs, shot_after)
+        if os.path.exists(shot_after) and (a11y_only or augmented):
+            state_after, _ = farscry_state(shot_after)
+            if state_before and state_after and state_before != state_after:
+                if vl_checkpoint(shot_after, task_instr):
+                    print(f"  [s{step:02d}] CHECKPOINT: task complete → stopping early")
+                    done = True
+
         if augmented:
-            shot_after = str(out_dir / f"{session_id}-s{step:02d}b.png")
-            save_screenshot(obs, shot_after)
             if os.path.exists(shot_after):
                 state_after, vasp_after = farscry_state(shot_after)
                 sf_frames.append((state_after, "state", vasp_after))
@@ -581,7 +704,7 @@ def _state_bits(state_id: str) -> int:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--mode", choices=["run_a", "run_b_a11y", "run_b_context", "run_b_dynamic", "run_b"], required=True)
+    p.add_argument("--mode", choices=["run_a", "run_b_a11y", "run_b_context", "run_b_dynamic", "run_b_submenu", "run_b"], required=True)
     p.add_argument("--tasks", type=Path, required=True)
     p.add_argument("--n", type=int, default=30)
     p.add_argument("--max-steps", type=int, default=15)
@@ -593,11 +716,12 @@ def main():
 
     from desktop_env.desktop_env import DesktopEnv
 
-    augmented    = args.mode == "run_b"
-    a11y_only    = args.mode in ("run_b_a11y", "run_b_context", "run_b_dynamic")
-    with_context = args.mode == "run_b_context"
-    with_dynamic = args.mode == "run_b_dynamic"
-    needs_a11y   = augmented or a11y_only
+    augmented     = args.mode == "run_b"
+    a11y_only     = args.mode in ("run_b_a11y", "run_b_context", "run_b_dynamic", "run_b_submenu")
+    with_context  = args.mode == "run_b_context"
+    with_dynamic  = args.mode == "run_b_dynamic"
+    with_submenu  = args.mode == "run_b_submenu"
+    needs_a11y    = augmented or a11y_only
     args.result_dir.mkdir(parents=True, exist_ok=True)
 
     tasks = json.loads(args.tasks.read_text())[:args.n]
@@ -629,6 +753,8 @@ def main():
                              augmented=augmented, a11y_only=a11y_only,
                              with_context=with_context,
                              with_dynamic=with_dynamic,
+                             with_submenu=with_submenu,
+                             needs_a11y=needs_a11y,
                              out_dir=args.result_dir)
                 results.append(r)
                 status = "PASS" if r["passed"] else "FAIL"
