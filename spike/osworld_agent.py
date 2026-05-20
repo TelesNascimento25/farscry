@@ -151,7 +151,8 @@ def encode(path: str) -> str:
 
 
 def vl_call(screenshot_path: str, task: str, history: list,
-            a11y_context: str = "", sf_feedback: str = "") -> str:
+            a11y_context: str = "", sf_feedback: str = "",
+            temperature: float = 0.0) -> str:
     augmented = bool(a11y_context)
     parts = [f"Task: {task}"]
     if sf_feedback:
@@ -170,7 +171,7 @@ def vl_call(screenshot_path: str, task: str, history: list,
 
     r = requests.post(f"{VL_SERVER}/v1/chat/completions",
                       json={"model": "qwen2.5-vl", "messages": messages,
-                            "max_tokens": 128, "temperature": 0.0},
+                            "max_tokens": 128, "temperature": temperature},
                       timeout=180)
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"].strip()
@@ -217,8 +218,8 @@ def action_to_pyautogui(raw: str) -> str | None:
 
 ESCAPE_LADDER = [
     "pyautogui.press('escape')",
-    "pyautogui.hotkey('alt', 'F4')",
     "pyautogui.hotkey('ctrl', 'z')",
+    "pyautogui.press('escape')",
     "pyautogui.hotkey('ctrl', 'z')",
     "pyautogui.click(960, 540)",
 ]
@@ -292,8 +293,10 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                     f"Try something completely different."
                 )
 
+        temp = min(0.1 * total_escapes, 0.7) if total_escapes > 0 else 0.0
         raw = vl_call(shot_path, task_instr, history,
-                      a11y_context=a11y_context, sf_feedback=sf_feedback)
+                      a11y_context=a11y_context, sf_feedback=sf_feedback,
+                      temperature=temp)
         history.append({"role": "assistant", "content": raw})
 
         if raw.upper().startswith("DONE"):
