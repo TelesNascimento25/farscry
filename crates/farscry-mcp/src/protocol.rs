@@ -60,9 +60,38 @@ impl<P: PipelineOps> McpServer<P> {
                 Self::extract_tool_schema(),
                 Self::diff_tool_schema(),
                 Self::mark_action_tool_schema(),
-                Self::checkpoint_tool_schema()
+                Self::checkpoint_tool_schema(),
+                Self::query_tool_schema()
             ]
         }))
+    }
+
+    fn query_tool_schema() -> Value {
+        serde_json::json!({
+            "name": "farscry_query",
+            "description": "Query the OS accessibility tree via SQL-like filters. Returns UI elements with exact pixel coordinates from AT-SPI (Linux), UIA (Windows), or AXUIElement (macOS). Falls back to the last OCR snapshot when the accessibility tree is unavailable.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "role": {
+                        "type": "string",
+                        "description": "Element role to filter by, e.g. 'push button', 'text', 'entry'"
+                    },
+                    "name_contains": {
+                        "type": "string",
+                        "description": "Substring match against accessible name"
+                    },
+                    "app_name": {
+                        "type": "string",
+                        "description": "Application name to scope the query"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max elements to return (default 50)"
+                    }
+                }
+            }
+        })
     }
 
     fn extract_tool_schema() -> Value {
@@ -164,6 +193,7 @@ impl<P: PipelineOps> McpServer<P> {
             "farscry_diff" => self.handle_mcp_diff_tool(&arguments).await,
             "farscry_mark_action" => self.handle_mcp_mark_action().await,
             "farscry_checkpoint" => self.handle_mcp_checkpoint(&arguments).await,
+            "farscry_query" => self.handle_mcp_query(&arguments).await,
             other => Err(mcp_error(-32602, &format!("Unknown tool: {other}"))),
         }
     }
@@ -411,6 +441,59 @@ impl<P: PipelineOps> McpServer<P> {
         Ok(tool_result_text(
             &farscry_formatter::VaspFormatter::format_diff(&delta),
         ))
+    }
+
+    async fn handle_mcp_query(&self, arguments: &Value) -> Result<Value, Value> {
+        #[cfg(not(feature = "a11y"))]
+        {
+            let _ = arguments;
+            return Ok(tool_result_text(
+                "farscry_query: accessibility tree support not compiled in this build.",
+            ));
+        }
+
+        #[cfg(feature = "a11y")]
+        {
+            use farscry_a11y::types::A11yQueryParams;
+
+            let params = A11yQueryParams {
+                role: arguments
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                name_contains: arguments
+                    .get("name_contains")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                app_name: arguments
+                    .get("app_name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                state_id_hex: None,
+                limit: arguments
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .map(|n| n as u32),
+            };
+
+            let store = match self.a11y_store.as_ref() {
+                Some(s) => s.clone(),
+                None => {
+                    return Ok(tool_result_text(
+                        "farscry_query: accessibility store not initialized.",
+                    ))
+                }
+            };
+
+            let result = store
+                .query(&params)
+                .await
+                .map_err(|e| mcp_error(-32000, &format!("a11y query error: {e}")))?;
+
+            Ok(tool_result_text(
+                &serde_json::to_string_pretty(&result).unwrap_or_default(),
+            ))
+        }
     }
 
     pub(crate) async fn compute_auto_diff(&self, current: &VaspOutput) -> Option<VaspDelta> {

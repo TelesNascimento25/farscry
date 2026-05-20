@@ -15,6 +15,8 @@ impl<P: PipelineOps> McpServer<P> {
         Self {
             pipeline: Arc::new(Mutex::new(pipeline)),
             last_state: Arc::new(Mutex::new(None)),
+            #[cfg(feature = "a11y")]
+            a11y_store: None,
         }
     }
 

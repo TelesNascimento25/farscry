@@ -9,6 +9,9 @@ pub use types::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use farscry_core::{StateId, VaspDelta, VaspOutput};
 use std::sync::{Arc, Mutex};
 
+#[cfg(feature = "a11y")]
+pub use farscry_a11y::A11yStore;
+
 #[derive(Debug, Clone)]
 pub enum ActionEffect {
     SilentFailure { before: StateId, after: StateId },
@@ -43,6 +46,8 @@ pub trait PipelineOps: Clone + Send + 'static {
 pub struct McpServer<P> {
     pipeline: Arc<Mutex<P>>,
     last_state: Arc<Mutex<Option<VaspOutput>>>,
+    #[cfg(feature = "a11y")]
+    pub a11y_store: Option<Arc<farscry_a11y::A11yStore>>,
 }
 
 #[cfg(test)]
@@ -267,7 +272,7 @@ mod tests {
         let tools = &response["result"]["tools"];
         assert!(tools.is_array());
         let tools_arr = tools.as_array().unwrap();
-        assert_eq!(tools_arr.len(), 4);
+        assert_eq!(tools_arr.len(), 5);
 
         let tool_names: Vec<&str> = tools_arr
             .iter()

@@ -13,10 +13,14 @@ path = "src/lib.rs"
 [dependencies]
 farscry-core = { path = "../farscry-core" }
 farscry-formatter = { path = "../farscry-formatter" }
+farscry-a11y = { path = "../farscry-a11y", optional = true }
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 image = { workspace = true }
+
+[features]
+a11y = ["dep:farscry-a11y"]
 
 [dev-dependencies]
 tempfile = "3"
