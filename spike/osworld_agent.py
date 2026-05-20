@@ -225,7 +225,8 @@ ESCAPE_LADDER = [
 
 
 def run_task(env, task_id: str, task_instr: str, task_config: dict,
-             max_steps: int, augmented: bool, out_dir: Path) -> dict:
+             max_steps: int, augmented: bool, out_dir: Path,
+             a11y_only: bool = False) -> dict:
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -251,6 +252,11 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
 
         a11y_context = ""
         sf_feedback = ""
+
+        if a11y_only:
+            a11y_xml = obs.get("accessibility_tree") if obs else None
+            elements = parse_a11y_tree(a11y_xml) if a11y_xml else []
+            a11y_context = format_a11y_context(elements)
 
         if augmented:
             state_before, vasp_text = farscry_state(shot_path)
@@ -375,7 +381,7 @@ def _state_bits(state_id: str) -> int:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--mode", choices=["run_a", "run_b"], required=True)
+    p.add_argument("--mode", choices=["run_a", "run_b_a11y", "run_b"], required=True)
     p.add_argument("--tasks", type=Path, required=True)
     p.add_argument("--n", type=int, default=30)
     p.add_argument("--max-steps", type=int, default=15)
@@ -388,17 +394,19 @@ def main():
     from desktop_env.desktop_env import DesktopEnv
 
     augmented = args.mode == "run_b"
+    a11y_only = args.mode == "run_b_a11y"
+    needs_a11y = augmented or a11y_only
     args.result_dir.mkdir(parents=True, exist_ok=True)
 
     tasks = json.loads(args.tasks.read_text())[:args.n]
-    print(f"mode={args.mode}  augmented={augmented}  n={len(tasks)}")
+    print(f"mode={args.mode}  augmented={augmented}  a11y_only={a11y_only}  n={len(tasks)}")
 
     print("Starting DesktopEnv...")
     env = DesktopEnv(
         path_to_vm=args.vm_path,
         provider_name=args.provider,
         action_space="pyautogui",
-        require_a11y_tree=augmented,
+        require_a11y_tree=needs_a11y,
         headless=True,
     )
     print("DesktopEnv ready.")
@@ -415,7 +423,8 @@ def main():
 
             try:
                 r = run_task(env, task_id, task_instr, task_config,
-                             max_steps=args.max_steps, augmented=augmented,
+                             max_steps=args.max_steps,
+                             augmented=augmented, a11y_only=a11y_only,
                              out_dir=args.result_dir)
                 results.append(r)
                 status = "PASS" if r["passed"] else "FAIL"
