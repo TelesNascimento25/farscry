@@ -307,17 +307,18 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         raw = vl_call(shot_path, task_instr, history,
                       a11y_context=a11y_context, sf_feedback=sf_feedback,
                       temperature=temp)
-        print(f"  [s{step:02d}] model → {raw[:80]}")
-        history.append({"role": "assistant", "content": raw})
+        clean = raw.strip().splitlines()[0].strip()
+        print(f"  [s{step:02d}] model → {clean[:80]}")
+        history.append({"role": "assistant", "content": clean})
 
-        if raw.upper().startswith("DONE"):
+        if clean.upper().startswith("DONE"):
             env.step("DONE", pause=0.5)
             break
-        if raw.upper().startswith("FAIL"):
+        if clean.upper().startswith("FAIL"):
             env.step("FAIL", pause=0.5)
             break
 
-        action_str = action_to_pyautogui(raw)
+        action_str = action_to_pyautogui(clean)
         if not action_str:
             break
 
