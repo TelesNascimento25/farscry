@@ -208,12 +208,17 @@ def save_screenshot(obs: dict, path: str):
 
 
 def action_to_pyautogui(raw: str) -> str | None:
-    raw = raw.strip()
+    raw = raw.strip().splitlines()[0].strip()
     if raw.upper().startswith("DONE") or raw.upper().startswith("FAIL"):
         return None
-    if "pyautogui." in raw:
-        return raw
-    return None
+    if "pyautogui." not in raw:
+        return None
+    if "start_box=" in raw:
+        m = _re.search(r"start_box=.?\(?(\d+)[,\s]+(\d+)", raw)
+        if m:
+            return f"pyautogui.click({m.group(1)}, {m.group(2)})"
+        return None
+    return raw
 
 
 ESCAPE_LADDER = [
@@ -294,9 +299,15 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 )
 
         temp = min(0.1 * total_escapes, 0.7) if total_escapes > 0 else 0.0
+        try:
+            n_elements = len(elements) if (augmented or a11y_only) else 0
+        except NameError:
+            n_elements = 0
+        print(f"  [s{step:02d}] a11y={n_elements}el  csf={consecutive_sf}  esc={total_escapes}  temp={temp:.1f}")
         raw = vl_call(shot_path, task_instr, history,
                       a11y_context=a11y_context, sf_feedback=sf_feedback,
                       temperature=temp)
+        print(f"  [s{step:02d}] model → {raw[:80]}")
         history.append({"role": "assistant", "content": raw})
 
         if raw.upper().startswith("DONE"):
@@ -322,7 +333,10 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 if state_before and state_after and state_before == state_after:
                     consecutive_sf += 1
                     max_csf = max(max_csf, consecutive_sf)
+                    print(f"  [s{step:02d}] SF! state_unchanged csf={consecutive_sf}")
                 else:
+                    if consecutive_sf > 0:
+                        print(f"  [s{step:02d}] state_changed (was csf={consecutive_sf})")
                     consecutive_sf = 0
 
         if done:
