@@ -159,7 +159,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 recovery_actions = [
                     "pyautogui.press('escape')",
                     "pyautogui.scroll(960, 540, 3)",
-                    "pyautogui.hotkey('alt', 'Tab')",
+                    "pyautogui.click(960, 540)",
                 ]
                 ridx = min(consecutive_sf - 1, len(recovery_actions) - 1)
                 recovery_action = recovery_actions[ridx]
@@ -169,6 +169,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 save_screenshot(obs, shot_path)
                 if os.path.exists(shot_path):
                     state_before, vasp_text = farscry_state(shot_path)
+                consecutive_sf = 0
 
         sf_feedback = ""
         if augmented and consecutive_sf >= 1:
