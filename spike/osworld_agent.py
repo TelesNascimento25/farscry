@@ -255,6 +255,55 @@ Accessible UI elements are listed with exact coordinates. Use them for clicks.
 If you receive a [SILENT_FAILURE] warning, try a completely different action."""
 
 
+def detect_dialog_next_action(focused_els: list[dict], tried_names: set[str]) -> str:
+    """
+    Detects common dialog interaction patterns from AT-SPI state.
+    Universal: file chooser, save dialog, open dialog, color picker, etc.
+    Returns a concrete hint with exact coordinates when pattern found.
+    """
+    if not focused_els:
+        return ""
+
+    DISMISS = {"cancel", "close", "no", "quit", "abort", "back", "escape"}
+    CONFIRM = {"open", "ok", "yes", "add", "save", "apply", "accept", "select",
+               "choose", "confirm", "done", "next", "finish", "continue"}
+
+    list_tried = [e for e in focused_els
+                  if e["role"] in ("list-item", "table-cell", "table-row", "row")
+                  and e["name"].lower() in tried_names]
+
+    confirm_buttons = [
+        e for e in focused_els
+        if e["role"] in ("button", "push-button", "toggle-button")
+        and e["name"].lower() not in tried_names
+        and not any(d in e["name"].lower() for d in DISMISS)
+    ]
+    confirm_buttons.sort(key=lambda e: (
+        0 if any(c in e["name"].lower() for c in CONFIRM) else 1,
+        -e["x"]
+    ))
+
+    if list_tried and confirm_buttons:
+        btn = confirm_buttons[0]
+        item = list_tried[-1]
+        return (
+            f"You have selected \"{item['name']}\". "
+            f"Now click the confirm button: \"{btn['name']}\" → pyautogui.click({btn['x']}, {btn['y']})"
+        )
+
+    text_inputs = [e for e in focused_els
+                   if e["role"] in ("entry", "textbox", "text")
+                   and e.get("enabled", True)]
+    if text_inputs and confirm_buttons:
+        btn = confirm_buttons[0]
+        return (
+            f"There is a text input field. Type the required value, "
+            f"then click \"{btn['name']}\" → pyautogui.click({btn['x']}, {btn['y']})"
+        )
+
+    return ""
+
+
 def parse_focused_subtree(xml_str: str) -> list[dict]:
     """
     Returns interactive elements INSIDE the focused container.
@@ -1096,12 +1145,16 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                             untried_elements=focused_untried[:4],
                         )
                         src = "focused container" if focused_els else "fallback all"
+                        dialog_hint = detect_dialog_next_action(focused_els, tried_names)
+                        if dialog_hint:
+                            print(f"  [s{step:02d}] DIALOG PATTERN: {dialog_hint[:80]}")
                         print(f"  [s{step:02d}] annotated: {len(focused_untried)} untried from {src}")
                         print(f"  [s{step:02d}] MICRO-LOOP → annotated screenshot (🔴 tried, 🟢 untried)")
                         sf_feedback = (
-                            "RED X marks = where you have been clicking repeatedly (not working).\n"
-                            "GREEN circles = elements you have NOT tried yet.\n"
-                            "Click a GREEN circle instead."
+                            (dialog_hint + "\n\n" if dialog_hint else "")
+                            + "RED X marks = where you have been clicking (not working).\n"
+                            + "GREEN circles = elements you have NOT tried yet.\n"
+                            + "Click a GREEN circle or follow the instruction above."
                         )
                         shot_path = annotated
                 else:
