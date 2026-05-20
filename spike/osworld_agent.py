@@ -211,11 +211,16 @@ def get_app_context(elements: list[dict]) -> str:
     return ""
 
 
-_STOP = {"the","and","for","with","that","this","from","have","want","can","will",
-         "you","your","help","please","using","into","some","also","then","when"}
+_STOP = {
+    "the","a","an","is","are","was","were","can","you","me","my","i","it",
+    "this","that","for","to","in","on","at","of","and","or","but","with",
+    "from","do","want","need","help","please","file","open","click","use",
+    "make","get","go","have","will","your","into","some","also","then","when",
+    "there","these","those","they","them","their","what","which","who","how",
+}
 
 def extract_keywords(task_text: str) -> list[str]:
-    words = _re.findall(r'\b[a-z]{4,}\b', task_text.lower())
+    words = _re.findall(r'\b[a-zA-Z]{3,}\b', task_text.lower())
     seen: set[str] = set()
     out = []
     for w in words:
@@ -227,41 +232,61 @@ def extract_keywords(task_text: str) -> list[str]:
     return out
 
 
+def build_menu_tree(elements: list[dict]) -> dict[str, str]:
+    MENU_ROLES = {
+        "menu", "menuitem", "menu-item", "menubar",
+        "push-button", "toggle-button", "button",
+        "check-box", "radio-button", "combo-box",
+    }
+    menu_els = [e for e in elements
+                if e.get("role", "") in MENU_ROLES and e.get("name", "").strip()]
+
+    root_menus = [e for e in menu_els if e.get("y", 999) < 100]
+    other_els   = [e for e in menu_els if e.get("y", 999) >= 100]
+
+    paths: dict[str, str] = {}
+    for e in root_menus:
+        paths[e["name"].lower()] = e["name"]
+
+    for e in other_els:
+        name = e["name"]
+        if not name:
+            continue
+        if root_menus:
+            closest = min(root_menus, key=lambda r: abs(r.get("x", 0) - e.get("x", 0)))
+            paths[name.lower()] = f"{closest['name']} → {name}"
+        else:
+            paths[name.lower()] = name
+
+    return paths
+
+
 def build_dynamic_context(elements: list[dict], task_text: str) -> str:
     if not elements:
         return ""
 
     keywords = extract_keywords(task_text)
-
-    MENU_ROLES = {"menu", "menuitem", "menu-item", "menubar", "push-button",
-                  "button", "toggle-button", "radio-button", "check-box",
-                  "combo-box", "tool-bar", "toolbar"}
-    interactive = [e for e in elements if e["role"] in MENU_ROLES]
-
-    seen_names: set[str] = set()
-    keyword_matches: list[dict] = []
-    for kw in keywords:
-        for el in interactive:
-            if kw in el["name"].lower() and el["name"] not in seen_names:
-                keyword_matches.append(el)
-                seen_names.add(el["name"])
-
-    menus = [e for e in interactive
-             if e["role"] in ("menu", "menuitem", "menu-item", "menubar")
-             and e["name"] not in seen_names][:8]
-
-    if not keyword_matches and not menus:
+    if not keywords:
         return ""
 
-    lines = ["Relevant paths derived from accessibility tree:"]
-    if keyword_matches:
-        lines.append("  Task-matched elements:")
-        for e in keyword_matches[:8]:
-            lines.append(f"    {e['role']:12} \"{e['name']}\" → ({e['x']}, {e['y']})")
-    if menus:
-        lines.append("  Available menus (explore for sub-options):")
-        for e in menus[:6]:
-            lines.append(f"    {e['role']:12} \"{e['name']}\" → ({e['x']}, {e['y']})")
+    tree = build_menu_tree(elements)
+
+    relevant: list[str] = []
+    seen: set[str] = set()
+    for kw in keywords:
+        for el_name, path in tree.items():
+            if kw in el_name and path not in seen:
+                relevant.append(path)
+                seen.add(path)
+
+    if not relevant:
+        return ""
+
+    lines = ["Relevant UI paths found for this task:"]
+    for path in relevant[:8]:
+        lines.append(f"  - {path}")
+    lines.append("")
+    lines.append("Use these paths. Click menu items in order.")
     return "\n".join(lines)
 
 
