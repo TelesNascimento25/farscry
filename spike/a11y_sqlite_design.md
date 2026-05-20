@@ -5,6 +5,26 @@
 
 ---
 
+## Prerequisites — Do This First
+
+**daemon.rs uses `thread::spawn` sync throughout.** serve.rs is already tokio-native. Before any
+new feature, migrate daemon.rs from manual threads to tokio tasks. Without this, adding
+AT-SPI (event-driven via D-Bus, wants async) on top of sync threads is compounding debt.
+
+Migration target — daemon.rs becomes:
+
+```
+tokio runtime
+ ├── capture_task     (1 FPS, pHash + VASF write)
+ ├── a11y_task        (event-driven AT-SPI, 500ms cadence)  ← new
+ ├── socket_server    (Unix socket, existing MCP requests)
+ └── mcp_http_server  (HTTP, if port is set)
+```
+
+RSS target after migration: <20MB with all tasks running.
+
+---
+
 ## Architecture
 
 ```
@@ -55,13 +75,39 @@ farscry_extract(image_path)
 
 ---
 
+## A11y Task Architecture — Zero Latency on Capture
+
+AT-SPI is slow by design (D-Bus round-trips, 20-50ms per tree walk). It must never block
+the capture_task. The correct separation:
+
+```
+capture_task (1 FPS)
+  └── reads:  Arc<RwLock<Option<A11ySnapshot>>>   ← non-blocking read
+  └── writes: VasfFrame enriched with latest snapshot (best-effort)
+
+a11y_task (event-driven OR 500ms timer)
+  └── walks AT-SPI tree
+  └── writes: Arc<RwLock<Option<A11ySnapshot>>>
+```
+
+The capture_task takes a read lock and immediately moves on. If a11y has not written yet,
+the frame is written without a11y data. Contract: **best-effort enrichment, never blocking**.
+
+SSIM note: SSIM is O(W×H) — ~2M operations at 1080p. pHash is O(32×32) after downsample.
+SSIM must never enter the runtime capture loop. Only valid use: offline corpus validation
+(identify pHash false positives in VASF sessions). At runtime, pHash is the only hash.
+
+---
+
 ## Cargo.toml Additions
+
+`rusqlite` is replaced by `sqlx` — async-native, fits tokio without adapters.
 
 Workspace root additions:
 
 ```toml
 [workspace.dependencies]
-rusqlite = { version = "0.31", features = ["bundled"] }
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio", "bundled"] }
 
 [target.'cfg(target_os = "linux")'.workspace.dependencies]
 atspi = { version = "0.6", default-features = false, features = ["async-std"] }
@@ -84,7 +130,7 @@ path = "src/lib.rs"
 
 [dependencies]
 farscry-core = { path = "../farscry-core" }
-rusqlite = { workspace = true }
+sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = "1"
 thiserror = { workspace = true }
