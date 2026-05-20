@@ -22,6 +22,7 @@ farscry-diff      = { path = "../farscry-diff" }
 farscry-formatter = { path = "../farscry-formatter" }
 farscry-mcp       = { path = "../farscry-mcp" }
 farscry-ocr       = { path = "../farscry-ocr" }
+farscry-a11y      = { path = "../farscry-a11y", optional = true }
 clap    = { version = "4", features = ["derive"] }
 anyhow  = "1"
 image   = { workspace = true }
@@ -52,3 +53,4 @@ cc = { version = "1", optional = false }
 
 [features]
 coreml = ["farscry-ocr/coreml"]
+a11y   = ["dep:farscry-a11y", "farscry-mcp/a11y"]

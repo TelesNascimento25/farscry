@@ -1204,6 +1204,7 @@ dependencies = [
  "crossbeam-channel",
  "ctrlc",
  "dirs",
+ "farscry-a11y",
  "farscry-classifier",
  "farscry-core",
  "farscry-diff",

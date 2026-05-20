@@ -9,8 +9,6 @@ pub use types::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use farscry_core::{StateId, VaspDelta, VaspOutput};
 use std::sync::{Arc, Mutex};
 
-#[cfg(feature = "a11y")]
-pub use farscry_a11y::A11yStore;
 
 #[derive(Debug, Clone)]
 pub enum ActionEffect {
@@ -33,6 +31,11 @@ pub trait PipelineOps: Clone + Send + 'static {
         0
     }
 
+    #[cfg(feature = "a11y")]
+    fn a11y_store(&self) -> Option<Arc<farscry_a11y::A11yStore>> {
+        None
+    }
+
     fn diff(
         &self,
         before: &VaspOutput,
@@ -46,8 +49,6 @@ pub trait PipelineOps: Clone + Send + 'static {
 pub struct McpServer<P> {
     pipeline: Arc<Mutex<P>>,
     last_state: Arc<Mutex<Option<VaspOutput>>>,
-    #[cfg(feature = "a11y")]
-    pub a11y_store: Option<Arc<farscry_a11y::A11yStore>>,
 }
 
 #[cfg(test)]

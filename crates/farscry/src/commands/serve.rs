@@ -23,7 +23,35 @@ pub async fn serve_mcp(
         .transpose()
         .map_err(|e| anyhow::anyhow!("Failed to create recorder: {e}"))?;
     let recorder_arc: Arc<Mutex<Option<SessionRecorder>>> = Arc::new(Mutex::new(recorder));
+
+    #[cfg(feature = "a11y")]
+    let a11y_store = {
+        let db_path = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".farscry")
+            .join("a11y.db");
+        match farscry_a11y::A11yStore::open(&db_path).await {
+            Ok(store) => {
+                let store_arc = std::sync::Arc::new(store);
+                let watcher = store_arc.clone();
+                tokio::spawn(async move {
+                    farscry_a11y::watch_and_store(watcher).await;
+                });
+                eprintln!("[farscry] a11y store ready: {}", db_path.display());
+                Some(store_arc)
+            }
+            Err(e) => {
+                eprintln!("[farscry] a11y store unavailable: {e}");
+                None
+            }
+        }
+    };
+
+    #[cfg(feature = "a11y")]
+    let adapter = RecordingAdapter::new_with_a11y(pipeline, recorder_arc.clone(), a11y_store);
+    #[cfg(not(feature = "a11y"))]
     let adapter = RecordingAdapter::new(pipeline, recorder_arc.clone());
+
     run_server(port, adapter).await;
     finalize_recorder(recorder_arc);
     Ok(())
@@ -239,6 +267,8 @@ struct RecordingAdapter {
     recorder: Arc<Mutex<Option<SessionRecorder>>>,
     last_effect: Arc<Mutex<Option<farscry_mcp::ActionEffect>>>,
     consecutive_sf: Arc<Mutex<usize>>,
+    #[cfg(feature = "a11y")]
+    a11y_store: Option<Arc<farscry_a11y::A11yStore>>,
 }
 
 impl RecordingAdapter {
@@ -248,6 +278,23 @@ impl RecordingAdapter {
             recorder,
             last_effect: Arc::new(Mutex::new(None)),
             consecutive_sf: Arc::new(Mutex::new(0)),
+            #[cfg(feature = "a11y")]
+            a11y_store: None,
+        }
+    }
+
+    #[cfg(feature = "a11y")]
+    fn new_with_a11y(
+        pipeline: Arc<Pipeline>,
+        recorder: Arc<Mutex<Option<SessionRecorder>>>,
+        a11y_store: Option<Arc<farscry_a11y::A11yStore>>,
+    ) -> Self {
+        Self {
+            pipeline,
+            recorder,
+            last_effect: Arc::new(Mutex::new(None)),
+            consecutive_sf: Arc::new(Mutex::new(0)),
+            a11y_store,
         }
     }
 
@@ -260,6 +307,11 @@ impl RecordingAdapter {
 }
 
 impl farscry_mcp::PipelineOps for RecordingAdapter {
+    #[cfg(feature = "a11y")]
+    fn a11y_store(&self) -> Option<std::sync::Arc<farscry_a11y::A11yStore>> {
+        self.a11y_store.clone()
+    }
+
     fn mark_action(&self) -> Option<farscry_core::StateId> {
         if let Ok(mut guard) = self.recorder.lock() {
             if let Some(rec) = guard.as_mut() {

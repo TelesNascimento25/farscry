@@ -476,11 +476,16 @@ impl<P: PipelineOps> McpServer<P> {
                     .map(|n| n as u32),
             };
 
-            let store = match self.a11y_store.as_ref() {
-                Some(s) => s.clone(),
+            let store = match self
+                .pipeline
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .a11y_store()
+            {
+                Some(s) => s,
                 None => {
                     return Ok(tool_result_text(
-                        "farscry_query: accessibility store not initialized.",
+                        "farscry_query: accessibility store not initialized. Start farscry with --features a11y and ensure AT-SPI is available.",
                     ))
                 }
             };
