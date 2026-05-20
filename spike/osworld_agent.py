@@ -45,8 +45,17 @@ Output only the statement. Do not explain."""
 
 SYSTEM_AUG = SYSTEM_BASE + """
 
-Screen state (VASP) is provided as structured text with element positions.
-When you see SILENT_FAILURE, your last action had no visual effect — choose a different action."""
+Screen state (VASP) is provided as structured text with element positions and affordances.
+Use the VASP affordances to find exact coordinates before clicking.
+
+When you see SILENT_FAILURE it means your last action produced no visible change.
+Recovery strategies (try in order):
+  1. Check VASP affordances — the element may be at different coordinates than expected
+  2. Scroll toward the target area: pyautogui.scroll(x, y, clicks=3)
+  3. Click to focus the window first, then retry
+  4. Use keyboard shortcut instead of clicking (e.g., hotkey('ctrl','s') instead of clicking Save)
+  5. Wait for loading: pyautogui.sleep(1) then retry
+  6. If 3+ consecutive failures, the task may require a completely different approach — try a menu item"""
 
 
 def encode(path: str) -> str:
@@ -148,7 +157,18 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
 
         sf_feedback = ""
         if augmented and consecutive_sf >= 1:
-            sf_feedback = f"SILENT_FAILURE (x{consecutive_sf}): action had no visual effect. Try something different."
+            last_action = history[-1]["content"] if history else "unknown"
+            recovery = (
+                "scroll to find the element, check window focus, or use a keyboard shortcut"
+                if consecutive_sf == 1 else
+                "try a menu-based approach or a completely different interaction path"
+                if consecutive_sf >= 3 else
+                "click to focus the window first, then retry with exact coordinates from VASP"
+            )
+            sf_feedback = (
+                f"SILENT_FAILURE x{consecutive_sf}: '{last_action}' had no visible effect on screen.\n"
+                f"Recovery: {recovery}."
+            )
 
         raw = vl_call(shot_path, task_instr, history, vasp=vasp_text, sf_feedback=sf_feedback)
         history.append({"role": "assistant", "content": raw})
