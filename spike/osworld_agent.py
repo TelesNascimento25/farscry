@@ -105,9 +105,12 @@ def parse_a11y_tree(xml_str: str, max_items: int = 25) -> list[dict]:
             continue
 
         cx, cy = x + w // 2, y + h // 2
+        enabled = node.get("{%s}enabled" % _A11Y_STATE_NS, "true") == "true"
+        sensitive = node.get("{%s}sensitive" % _A11Y_STATE_NS, "true") == "true"
         elements.append({
             "role": role, "name": name[:60],
             "x": cx, "y": cy,
+            "enabled": enabled and sensitive,
             "in_modal": any(m in name for m in modal_names),
         })
 
@@ -288,6 +291,35 @@ def build_dynamic_context(elements: list[dict], task_text: str) -> str:
     lines.append("")
     lines.append("Use these paths. Click menu items in order.")
     return "\n".join(lines)
+
+
+def detect_preconditions(elements: list[dict], task_keywords: list[str]) -> str:
+    disabled_relevant = [
+        e for e in elements
+        if not e.get("enabled", True)
+        and any(kw in e["name"].lower() for kw in task_keywords)
+    ]
+
+    if not disabled_relevant:
+        return ""
+
+    enabled_actions = [
+        e for e in elements
+        if e.get("enabled", True)
+        and e.get("role") in ("button", "push-button", "menuitem", "menu", "toggle-button")
+        and e.get("name", "").strip()
+    ]
+
+    disabled_names = [e["name"] for e in disabled_relevant[:3]]
+    available_names = [e["name"] for e in enabled_actions[:5]]
+
+    msg = (
+        f"NOTE: {', '.join(disabled_names)} are currently disabled. "
+        f"Something may need to happen first. "
+    )
+    if available_names:
+        msg += f"Currently available: {', '.join(available_names)}."
+    return msg
 
 
 def explore_and_build_context(
@@ -564,21 +596,29 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         if a11y_only:
             a11y_xml = obs.get("accessibility_tree") if obs else None
             elements = parse_a11y_tree(a11y_xml) if a11y_xml else []
+            task_kw = extract_keywords(task_instr)
+
+            precond = detect_preconditions(elements, task_kw)
+            if precond:
+                print(f"  [s{step:02d}] precond: {precond[:70]}")
+
             if with_submenu and submenu_context:
                 el_lines = "\n".join(
                     f"  {e['role']:12s} \"{e['name']}\" → ({e['x']}, {e['y']})"
+                    + (" [disabled]" if not e.get("enabled", True) else "")
                     for e in elements
                 )
-                a11y_context = submenu_context + "\n\nUI elements:\n" + el_lines
+                a11y_context = (precond + "\n\n" if precond else "") + submenu_context + "\n\nUI elements:\n" + el_lines
             else:
-                a11y_context = format_a11y_context(
+                base = format_a11y_context(
                     elements,
                     with_app_context=with_context,
                     with_dynamic_context=with_dynamic,
                     task_text=task_instr,
                 )
+                a11y_context = (precond + "\n\n" if precond else "") + base
             if (with_context or with_dynamic) and elements and not with_submenu:
-                kw = extract_keywords(task_instr) if with_dynamic else []
+                kw = task_kw if with_dynamic else []
                 matched = len([e for e in elements
                                 if any(k in e["name"].lower() for k in kw)]) if kw else 0
                 label = "dynamic" if with_dynamic else "static"
@@ -648,12 +688,12 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         coords = _parse_click_coords(action_str)
         if coords:
             action_coord_history.append(coords)
-            if len(action_coord_history) >= 4:
-                recent = action_coord_history[-4:]
+            if len(action_coord_history) >= 6:
+                recent = action_coord_history[-6:]
                 buckets = {(round(x / 10) * 10, round(y / 10) * 10) for x, y in recent}
-                if len(buckets) <= 2:
+                if len(buckets) <= 3:
                     micro_loop_count += 1
-                    if micro_loop_count >= 3:
+                    if micro_loop_count >= 2:
                         sf_feedback = (
                             "You are stuck in a loop. "
                             "Try a completely different approach. "
@@ -670,7 +710,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             state_after, _ = farscry_state(shot_after)
             if state_before and state_after and state_before != state_after:
                 hamming = _phash_hamming(state_before, state_after)
-                if hamming > 15:
+                if hamming > 5:
                     if vl_checkpoint(shot_after, task_instr):
                         print(f"  [s{step:02d}] CHECKPOINT (Δ={hamming}): done → stopping early")
                         done = True
@@ -764,7 +804,8 @@ def _state_bits(state_id: str) -> int:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--mode", choices=["run_a", "run_b_a11y", "run_b_context", "run_b_dynamic", "run_b_submenu", "run_b_full", "run_b"], required=True)
+    p.add_argument("--mode", choices=["run_a", "run_b_a11y", "run_b_context", "run_b_dynamic",
+                                       "run_b_submenu", "run_b_full", "run_b_smart", "run_b"], required=True)
     p.add_argument("--tasks", type=Path, required=True)
     p.add_argument("--n", type=int, default=30)
     p.add_argument("--max-steps", type=int, default=15)
@@ -778,10 +819,10 @@ def main():
 
     augmented     = args.mode == "run_b"
     a11y_only     = args.mode in ("run_b_a11y", "run_b_context", "run_b_dynamic",
-                                   "run_b_submenu", "run_b_full")
+                                   "run_b_submenu", "run_b_full", "run_b_smart")
     with_context  = args.mode == "run_b_context"
-    with_dynamic  = args.mode in ("run_b_dynamic", "run_b_full")
-    with_submenu  = args.mode in ("run_b_submenu", "run_b_full")
+    with_dynamic  = args.mode in ("run_b_dynamic", "run_b_full", "run_b_smart")
+    with_submenu  = args.mode in ("run_b_submenu", "run_b_full", "run_b_smart")
     needs_a11y    = augmented or a11y_only
     args.result_dir.mkdir(parents=True, exist_ok=True)
 
