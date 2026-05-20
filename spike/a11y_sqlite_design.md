@@ -107,7 +107,8 @@ Workspace root additions:
 
 ```toml
 [workspace.dependencies]
-sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio", "bundled"] }
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio"] }
+libsqlite3-sys = { version = "0.27", features = ["bundled"] }
 
 [target.'cfg(target_os = "linux")'.workspace.dependencies]
 atspi = { version = "0.6", default-features = false, features = ["async-std"] }
@@ -131,6 +132,7 @@ path = "src/lib.rs"
 [dependencies]
 farscry-core = { path = "../farscry-core" }
 sqlx = { workspace = true }
+libsqlite3-sys = { workspace = true }
 serde = { workspace = true }
 serde_json = "1"
 thiserror = { workspace = true }
