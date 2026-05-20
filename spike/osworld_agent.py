@@ -771,6 +771,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
     obs = env.reset(task_config=task_config)
 
     initial_sem_names: set[str] = set()
+    prev_step_names:   set[str] = set()
     if a11y_only and obs and needs_a11y:
         init_xml = obs.get("accessibility_tree")
         if init_xml:
@@ -779,6 +780,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 e.get("name", "").lower()
                 for e in init_sem["interactive"] + init_sem["content"]
             }
+            prev_step_names = set(initial_sem_names)
 
     if with_submenu and obs:
         a11y_xml = obs.get("accessibility_tree")
@@ -815,13 +817,60 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 submenu_context = dyn_paths
                 print(f"  [s{step:02d}] CTX_LIVE {len(elements)}el")
 
+            # SINAL 1 — novos elementos desde o step anterior
+            current_names = {
+                e.get("name", "").lower()
+                for e in elements + sem_state["content"]
+                if e.get("name", "").strip()
+            }
+            new_since_prev = current_names - prev_step_names
+            appeared_signal = ""
+            if new_since_prev and len(new_since_prev) >= 2:
+                new_labels = [n for n in new_since_prev if len(n) > 2][:6]
+                if new_labels:
+                    appeared_signal = (
+                        f"⚡ NEW UI CONTEXT: These elements just appeared after your last action:\n"
+                        + "\n".join(f"  - {n}" for n in new_labels)
+                        + "\nYou are in a new context. Interact with these new elements."
+                    )
+                    print(f"  [s{step:02d}] APPEARED: {new_labels[:3]}")
+            prev_step_names = current_names
+
+            # SINAL 2 — elementos que o modelo ainda não tentou
+            tried_names: set[str] = set()
+            for coord in action_coord_history[-10:]:
+                cx, cy = coord
+                for e in elements:
+                    if abs(e["x"] - cx) < 20 and abs(e["y"] - cy) < 20:
+                        tried_names.add(e["name"].lower())
+            untried = [
+                e for e in elements
+                if e.get("enabled", True)
+                and e["name"].lower() not in tried_names
+                and e["name"].strip()
+            ]
+            untried_signal = ""
+            if untried and len(tried_names) >= 2:
+                untried_signal = (
+                    "Elements you have NOT yet tried:\n"
+                    + "\n".join(
+                        f"  - {e['role']} \"{e['name']}\" → ({e['x']}, {e['y']})"
+                        for e in untried[:5]
+                    )
+                )
+                print(f"  [s{step:02d}] UNTRIED: {[e['name'] for e in untried[:3]]}")
+
             if precond:
                 print(f"  [s{step:02d}] precond: {precond[:70]}")
 
             ctx_parts = []
+            if appeared_signal:
+                ctx_parts.append(appeared_signal)
+            elif untried_signal and len(tried_names) >= 3:
+                ctx_parts.append(untried_signal)
             if precond:
                 ctx_parts.append(precond)
-            if submenu_context:
+            if submenu_context and not appeared_signal:
                 ctx_parts.append(submenu_context)
             if live_ctx:
                 ctx_parts.append(live_ctx)
