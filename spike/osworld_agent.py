@@ -196,17 +196,26 @@ def semantic_state_to_context(state: dict, task_keywords: list[str]) -> str:
     return "\n\n".join(parts)
 
 
+_GENERIC_TERMS = {
+    "home", "user", "folder", "file", "open", "path", "data",
+    "root", "local", "desktop", "document", "directory", "item",
+}
+
 def semantic_task_done(state: dict, task_keywords: list[str],
                        task_instr: str, initial_names: set[str]) -> bool:
     """
-    Zero VL model. Zero external oracle.
-    Only fires when NEW elements appear that weren't in the initial state
-    AND match task keywords.
-    Prevents false positives on document content that pre-existed.
-    Works for: rename, form fill, settings change, folder add.
-    Does NOT fire for: document editing (content already exists).
+    Fires ONLY when specific new UI elements appear after actions.
+    Uses long, unique keywords (>5 chars, not generic path terms).
+    Prevents false positives for common path/file system terms.
     """
     if not task_keywords:
+        return False
+
+    specific_kw = [
+        k for k in task_keywords
+        if len(k) > 5 and k not in _GENERIC_TERMS
+    ]
+    if len(specific_kw) < 2:
         return False
 
     current_names = {
@@ -215,16 +224,18 @@ def semantic_task_done(state: dict, task_keywords: list[str],
     }
     new_names = current_names - initial_names
 
-    if not new_names:
-        checked_values = " ".join(
-            v.get("value", "").lower() for v in state["values"]
-        )
-        new_val_matches = sum(1 for k in task_keywords if k in checked_values)
-        return new_val_matches >= min(2, len(task_keywords))
+    if new_names:
+        new_text = " ".join(new_names)
+        new_matches = sum(1 for k in specific_kw if k in new_text)
+        if new_matches >= min(3, len(specific_kw)):
+            return True
 
-    new_text = " ".join(new_names)
-    new_matches = sum(1 for k in task_keywords if k in new_text)
-    return new_matches >= min(2, len(task_keywords))
+    checked_values = " ".join(v.get("value", "").lower() for v in state["values"])
+    if checked_values:
+        val_matches = sum(1 for k in specific_kw if k in checked_values)
+        return val_matches >= min(3, len(specific_kw))
+
+    return False
 
 SYSTEM_BASE = """You control a desktop. Output a single pyautogui Python statement.
 Examples:
