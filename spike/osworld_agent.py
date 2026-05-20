@@ -2,9 +2,18 @@
 import sys
 import types
 
-for _pkg in ["acoustid", "librosa", "fastdtw", "PyPDF2", "borb", "mutagen", "pdfplumber"]:
+class _Stub(types.ModuleType):
+    def __getattr__(self, name):
+        sub = _Stub(self.__name__ + "." + name)
+        sys.modules[sub.__name__] = sub
+        return sub
+    def __call__(self, *a, **kw):
+        return _Stub("_call")
+
+for _pkg in ["acoustid", "librosa", "fastdtw", "PyPDF2", "borb", "borb.pdf",
+             "mutagen", "pdfplumber", "ag2", "agp_client", "easyocr", "torch", "cv2"]:
     if _pkg not in sys.modules:
-        sys.modules[_pkg] = types.ModuleType(_pkg)
+        sys.modules[_pkg] = _Stub(_pkg)
 
 import argparse
 import base64
