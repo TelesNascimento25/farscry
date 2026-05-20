@@ -196,19 +196,35 @@ def semantic_state_to_context(state: dict, task_keywords: list[str]) -> str:
     return "\n\n".join(parts)
 
 
-def semantic_task_done(state: dict, task_keywords: list[str], task_instr: str) -> bool:
+def semantic_task_done(state: dict, task_keywords: list[str],
+                       task_instr: str, initial_names: set[str]) -> bool:
     """
     Zero VL model. Zero external oracle.
-    Checks if task keywords appear as current VALUES in the UI state.
-    Works for: rename (new name in tree), form fill (value set),
-               settings change (value updated), etc.
+    Only fires when NEW elements appear that weren't in the initial state
+    AND match task keywords.
+    Prevents false positives on document content that pre-existed.
+    Works for: rename, form fill, settings change, folder add.
+    Does NOT fire for: document editing (content already exists).
     """
-    all_text = " ".join(
-        (e.get("name", "") + " " + e.get("value", "")).lower()
-        for e in state["interactive"] + state["content"] + state["values"]
-    )
-    matches = sum(1 for k in task_keywords if k in all_text)
-    return matches >= min(2, len(task_keywords))
+    if not task_keywords:
+        return False
+
+    current_names = {
+        e.get("name", "").lower()
+        for e in state["interactive"] + state["content"]
+    }
+    new_names = current_names - initial_names
+
+    if not new_names:
+        checked_values = " ".join(
+            v.get("value", "").lower() for v in state["values"]
+        )
+        new_val_matches = sum(1 for k in task_keywords if k in checked_values)
+        return new_val_matches >= min(2, len(task_keywords))
+
+    new_text = " ".join(new_names)
+    new_matches = sum(1 for k in task_keywords if k in new_text)
+    return new_matches >= min(2, len(task_keywords))
 
 SYSTEM_BASE = """You control a desktop. Output a single pyautogui Python statement.
 Examples:
@@ -743,6 +759,16 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
 
     obs = env.reset(task_config=task_config)
 
+    initial_sem_names: set[str] = set()
+    if a11y_only and obs and needs_a11y:
+        init_xml = obs.get("accessibility_tree")
+        if init_xml:
+            init_sem = extract_semantic_state(init_xml)
+            initial_sem_names = {
+                e.get("name", "").lower()
+                for e in init_sem["interactive"] + init_sem["content"]
+            }
+
     if with_submenu and obs:
         a11y_xml = obs.get("accessibility_tree")
         if a11y_xml:
@@ -885,7 +911,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 new_xml = obs.get("accessibility_tree")
                 if new_xml:
                     new_sem = extract_semantic_state(new_xml)
-                    if semantic_task_done(new_sem, task_kw, task_instr):
+                    if semantic_task_done(new_sem, task_kw, task_instr, initial_sem_names):
                         print(f"  [s{step:02d}] SEMANTIC_DONE: task keywords found in UI state")
                         done = True
             if not done and state_before and state_after and state_before != state_after:
