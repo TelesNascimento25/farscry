@@ -43,6 +43,27 @@ fn print_human(r: &SessionAnalysis) {
         failed, successful
     );
     println!();
+    println!("ACTION EFFECT RATE (AER)");
+    println!("{}", "\u{2500}".repeat(50));
+    println!(
+        "  AER:    {:.1}%  ({} effects / {} actions)",
+        r.aer * 100.0,
+        r.ae_count,
+        r.total_actions
+    );
+    println!(
+        "  SF rate: {:.1}%  ({} silent failures / {} actions)",
+        r.sf_rate * 100.0,
+        r.sf_count,
+        r.total_actions
+    );
+    if r.max_consecutive_sf > 0 {
+        println!(
+            "  Max consecutive SF: {} actions in a row",
+            r.max_consecutive_sf
+        );
+    }
+    println!();
     println!("FAILURE PATTERN ANALYSIS");
     println!("{}", "\u{2500}".repeat(50));
     if r.failure_patterns.is_empty() {
@@ -71,7 +92,7 @@ fn print_human(r: &SessionAnalysis) {
         "  {} sessions ({}%) contain visual loops",
         r.visual_loop_sessions, vl_pct
     );
-    println!("  Same StateId 3+ consecutive times.");
+    println!("  Sliding window: same StateId 3+ times in 6-step window.");
     println!(
         "  Avg tokens burned in loops: {}/session",
         fmt_number(r.avg_tokens_burned_in_loops as u64)
@@ -141,6 +162,14 @@ fn print_json(r: &SessionAnalysis) {
         "total_sessions": r.total_sessions,
         "failed_sessions": failed,
         "successful_sessions": successful,
+        "aer": r.aer,
+        "aer_pct": (r.aer * 100.0) as u32,
+        "sf_rate": r.sf_rate,
+        "sf_rate_pct": (r.sf_rate * 100.0) as u32,
+        "total_actions": r.total_actions,
+        "ae_count": r.ae_count,
+        "sf_count": r.sf_count,
+        "max_consecutive_sf": r.max_consecutive_sf,
         "silent_failure_sessions": r.silent_failure_sessions,
         "silent_failure_pct": sf_pct,
         "visual_loop_sessions": r.visual_loop_sessions,

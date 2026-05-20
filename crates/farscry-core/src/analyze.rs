@@ -12,6 +12,12 @@ pub struct SessionAnalysis {
     pub visual_loop_sessions: usize,
     pub failure_patterns: Vec<FailurePattern>,
     pub avg_tokens_burned_in_loops: f64,
+    pub total_actions: u64,
+    pub sf_count: u64,
+    pub ae_count: u64,
+    pub aer: f32,
+    pub sf_rate: f32,
+    pub max_consecutive_sf: usize,
 }
 
 pub struct FailurePattern {
@@ -28,9 +34,26 @@ struct ParsedSession {
     terminal_screen_type: ScreenType,
     terminal_screen_type_str: String,
     terminal_agent_context: String,
-    has_silent_failure: bool,
+    sf_count: usize,
+    ae_count: usize,
+    max_consecutive_sf: usize,
     loop_tokens_burned: u64,
     has_visual_loop: bool,
+    high_sf_rate: bool,
+}
+
+impl ParsedSession {
+    fn has_silent_failure(&self) -> bool {
+        self.sf_count > 0
+    }
+    fn sf_rate(&self) -> f32 {
+        let total = self.sf_count + self.ae_count;
+        if total == 0 {
+            0.0
+        } else {
+            self.sf_count as f32 / total as f32
+        }
+    }
 }
 
 pub fn analyze_sessions(
@@ -72,51 +95,92 @@ fn load_one(path: &Path) -> Result<ParsedSession, std::io::Error> {
         .unwrap_or_default();
 
     let terminal_screen_type = parse_screen_type(&terminal_screen_type_str);
-    let has_silent_failure = detect_silent_failure(&vasf.frames);
-    let (has_visual_loop, loop_tokens_burned) = detect_visual_loop(&state_ids);
+    let (sf_count, ae_count, max_consecutive_sf) = count_action_effects(&vasf.frames);
+    let (has_visual_loop, loop_tokens_burned) = detect_visual_loop_sliding(&state_ids);
+    let high_sf_rate = {
+        let total = sf_count + ae_count;
+        total >= 3 && sf_count as f32 / total as f32 > 0.5
+    };
 
     Ok(ParsedSession {
         state_ids,
         terminal_screen_type,
         terminal_screen_type_str,
         terminal_agent_context,
-        has_silent_failure,
+        sf_count,
+        ae_count,
+        max_consecutive_sf,
         has_visual_loop,
         loop_tokens_burned,
+        high_sf_rate,
     })
 }
 
-fn detect_silent_failure(frames: &[crate::vasf::VasfFrame]) -> bool {
-    let action_marker_indices: Vec<usize> = frames
+fn count_action_effects(frames: &[crate::vasf::VasfFrame]) -> (usize, usize, usize) {
+    let marker_indices: Vec<usize> = frames
         .iter()
         .enumerate()
         .filter(|(_, f)| is_action_marker(f))
         .map(|(i, _)| i)
         .collect();
 
-    if action_marker_indices.is_empty() {
-        return false;
+    if marker_indices.is_empty() {
+        return (0, 0, 0);
     }
 
-    for &marker_idx in &action_marker_indices {
-        let state_before = frames[..marker_idx]
+    let mut sf = 0usize;
+    let mut ae = 0usize;
+    let mut current_consecutive = 0usize;
+    let mut max_consecutive = 0usize;
+
+    for &midx in &marker_indices {
+        let before = frames[..midx]
             .iter()
             .rev()
             .find(|f| !is_action_marker(f))
             .map(|f| f.state_id);
-
-        let state_after = frames[marker_idx + 1..]
+        let after = frames[midx + 1..]
             .iter()
             .find(|f| !is_action_marker(f))
             .map(|f| f.state_id);
 
-        if let (Some(before), Some(after)) = (state_before, state_after) {
-            if before == after {
-                return true;
+        match (before, after) {
+            (Some(b), Some(a)) if b == a => {
+                sf += 1;
+                current_consecutive += 1;
+                max_consecutive = max_consecutive.max(current_consecutive);
+            }
+            (Some(_), Some(_)) => {
+                ae += 1;
+                current_consecutive = 0;
+            }
+            _ => {
+                current_consecutive = 0;
             }
         }
     }
-    false
+    (sf, ae, max_consecutive)
+}
+
+fn detect_visual_loop_sliding(state_ids: &[StateId]) -> (bool, u64) {
+    if state_ids.len() < 3 {
+        return (false, 0);
+    }
+    let window = 6.min(state_ids.len());
+    let mut max_repeat = 0usize;
+    for i in 0..state_ids.len().saturating_sub(window - 1) {
+        let slice = &state_ids[i..i + window];
+        let mut counts: HashMap<StateId, usize> = HashMap::new();
+        for &id in slice {
+            *counts.entry(id).or_insert(0) += 1;
+        }
+        if let Some(&m) = counts.values().max() {
+            max_repeat = max_repeat.max(m);
+        }
+    }
+    let has_loop = max_repeat >= 3;
+    let extra = if max_repeat >= 3 { max_repeat - 1 } else { 0 };
+    (has_loop, extra as u64 * TOKENS_PER_VASF_FRAME)
 }
 
 fn classify_and_analyze(
@@ -128,7 +192,7 @@ fn classify_and_analyze(
     for (i, session) in sessions.iter().enumerate() {
         let is_failed = match failed_set {
             Some(set) => set.contains(all_paths[i]),
-            None => session.terminal_screen_type == ScreenType::Error,
+            None => session.terminal_screen_type == ScreenType::Error || session.high_sf_rate,
         };
         if is_failed {
             failed_indices.push(i);
@@ -139,7 +203,7 @@ fn classify_and_analyze(
     let failed_subset: Vec<&ParsedSession> = failed_indices.iter().map(|&i| &sessions[i]).collect();
     let silent_failure_sessions = failed_subset
         .iter()
-        .filter(|s| s.has_silent_failure)
+        .filter(|s| s.has_silent_failure())
         .count();
     let visual_loop_sessions = failed_subset.iter().filter(|s| s.has_visual_loop).count();
     let total_loop_tokens: u64 = failed_subset
@@ -152,6 +216,29 @@ fn classify_and_analyze(
     } else {
         0.0
     };
+
+    let total_actions: u64 = sessions
+        .iter()
+        .map(|s| (s.sf_count + s.ae_count) as u64)
+        .sum();
+    let sf_count: u64 = sessions.iter().map(|s| s.sf_count as u64).sum();
+    let ae_count: u64 = sessions.iter().map(|s| s.ae_count as u64).sum();
+    let aer = if total_actions > 0 {
+        ae_count as f32 / total_actions as f32
+    } else {
+        0.0
+    };
+    let sf_rate = if total_actions > 0 {
+        sf_count as f32 / total_actions as f32
+    } else {
+        0.0
+    };
+    let max_consecutive_sf = sessions
+        .iter()
+        .map(|s| s.max_consecutive_sf)
+        .max()
+        .unwrap_or(0);
+
     let failure_patterns = build_failure_patterns(&failed_subset, failed_sessions);
     Ok(SessionAnalysis {
         total_sessions,
@@ -160,6 +247,12 @@ fn classify_and_analyze(
         visual_loop_sessions,
         failure_patterns,
         avg_tokens_burned_in_loops,
+        total_actions,
+        sf_count,
+        ae_count,
+        aer,
+        sf_rate,
+        max_consecutive_sf,
     })
 }
 
@@ -196,16 +289,6 @@ fn build_failure_patterns(failed: &[&ParsedSession], total_failed: usize) -> Vec
         .collect();
     patterns.sort_by(|a, b| b.failure_count.cmp(&a.failure_count));
     patterns
-}
-
-fn detect_visual_loop(state_ids: &[StateId]) -> (bool, u64) {
-    let mut counts: HashMap<StateId, usize> = HashMap::new();
-    for &id in state_ids {
-        *counts.entry(id).or_insert(0) += 1;
-    }
-    let extra_visits: usize = counts.values().filter(|&&c| c >= 3).map(|&c| c - 1).sum();
-    let has_loop = counts.values().any(|&c| c >= 3);
-    (has_loop, extra_visits as u64 * TOKENS_PER_VASF_FRAME)
 }
 
 fn vasp_field<'a>(text: &'a str, prefix: &str) -> &'a str {
@@ -289,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_visual_loop_detection() {
-        let (has_loop, tokens) = detect_visual_loop(&[
+        let (has_loop, tokens) = detect_visual_loop_sliding(&[
             StateId::from_bits(1),
             StateId::from_bits(2),
             StateId::from_bits(1),
@@ -302,7 +385,7 @@ mod tests {
 
     #[test]
     fn test_no_visual_loop_when_state_appears_twice() {
-        let (has_loop, _) = detect_visual_loop(&[
+        let (has_loop, _) = detect_visual_loop_sliding(&[
             StateId::from_bits(1),
             StateId::from_bits(2),
             StateId::from_bits(1),
