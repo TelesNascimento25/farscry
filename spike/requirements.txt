@@ -1,0 +1,7 @@
+Pillow>=10.0
+numpy>=1.24
+scipy>=1.11
+imagehash>=4.3
+zstandard>=0.22
+anthropic>=0.28
+requests

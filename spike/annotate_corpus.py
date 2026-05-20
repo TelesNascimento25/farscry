@@ -1,9 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["anthropic>=0.28", "numpy>=1.24", "zstandard>=0.22"]
-# ///
-
+#!/usr/bin/env python3
 import argparse
 import json
 import os

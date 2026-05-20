@@ -1,9 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["Pillow>=10.0", "numpy>=1.24", "scipy>=1.11", "imagehash>=4.3"]
-# ///
-
+#!/usr/bin/env python3
 import argparse
 import csv
 import random
