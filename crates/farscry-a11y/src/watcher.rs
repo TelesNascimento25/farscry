@@ -1,145 +1,154 @@
 use std::sync::Arc;
+use std::time::Duration;
 
-use crate::store::A11yStore;
+use crate::{store::A11yStore, types::A11ySnapshot};
+use farscry_core::StateId;
 
 pub async fn watch_and_store(store: Arc<A11yStore>) {
     #[cfg(target_os = "linux")]
     linux::run(store).await;
 
     #[cfg(not(target_os = "linux"))]
-    {
-        let _ = store;
-    }
+    let _ = store;
 }
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    use crate::{
-        store::A11yStore,
-        types::{A11yNode, A11ySnapshot},
-    };
-    use farscry_core::StateId;
+    use super::*;
 
     pub async fn run(store: Arc<A11yStore>) {
-        match try_connect_and_watch(store).await {
-            Ok(()) => {}
-            Err(e) => {
-                eprintln!("[farscry:a11y] watcher stopped: {e}");
+        eprintln!("[farscry:a11y] starting AT-SPI polling");
+        loop {
+            if let Err(e) = poll_once(&store).await {
+                eprintln!("[farscry:a11y] poll error: {e}");
             }
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
 
-    async fn try_connect_and_watch(store: Arc<A11yStore>) -> Result<(), Box<dyn std::error::Error>> {
-        let conn = match atspi::Connection::open().await {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("[farscry:a11y] AT-SPI unavailable, running without a11y enrichment: {e}");
-                return Ok(());
-            }
-        };
+    async fn poll_once(store: &A11yStore) -> Result<(), Box<dyn std::error::Error>> {
+        let conn = atspi::Connection::open().await?;
 
-        conn.register_event::<atspi::events::object::StateChangedEvent>().await?;
-        conn.register_event::<atspi::events::focus::FocusEvent>().await?;
+        let captured_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
 
-        eprintln!("[farscry:a11y] watching AT-SPI events");
+        let nodes = walk_desktop(&conn).await;
 
-        let mut stream = conn.event_stream();
-        use futures_lite::StreamExt;
-
-        let mut last_scrape_ms: i64 = 0;
-        let throttle_ms: i64 = 500;
-
-        loop {
-            match tokio::time::timeout(Duration::from_millis(600), stream.next()).await {
-                Ok(Some(Ok(_event))) => {
-                    let now_ms = now_ms();
-                    if now_ms - last_scrape_ms < throttle_ms {
-                        continue;
-                    }
-                    last_scrape_ms = now_ms;
-
-                    if let Ok(snap) = scrape_focused(&conn, now_ms).await {
-                        store.insert(&snap).await.ok();
-                    }
-                }
-                Ok(Some(Err(e))) => {
-                    eprintln!("[farscry:a11y] event error: {e}");
-                }
-                Ok(None) => break,
-                Err(_timeout) => {}
-            }
+        if nodes.is_empty() {
+            return Ok(());
         }
 
+        let snap = A11ySnapshot {
+            state_id: StateId::from_bits(
+                nodes.iter().fold(0u64, |acc, n| {
+                    acc.wrapping_add(n.x as u64)
+                        .wrapping_add(n.y as u64)
+                        .wrapping_add(n.role.len() as u64)
+                }),
+            ),
+            captured_at_ms,
+            app_name: nodes
+                .first()
+                .map(|n| n.description.clone())
+                .unwrap_or_default(),
+            nodes,
+        };
+
+        store.insert(&snap).await?;
         Ok(())
     }
 
-    async fn scrape_focused(
+    async fn walk_desktop(
         conn: &atspi::Connection,
-        captured_at_ms: i64,
-    ) -> Result<A11ySnapshot, Box<dyn std::error::Error>> {
-        use atspi::proxy::accessible::AccessibleProxy;
+    ) -> Vec<crate::types::A11yNode> {
+        use atspi::accessible::AccessibleProxy;
+        use atspi::component::ComponentProxy;
 
-        let desktop = AccessibleProxy::new(conn.connection()).await?;
-        let app_name = desktop.name().await.unwrap_or_else(|_| "unknown".into());
+        let mut results = Vec::new();
 
-        let mut nodes = Vec::new();
-        scrape_node(&desktop, &mut nodes, None, 0).await;
+        let registry = conn.deref();
 
-        Ok(A11ySnapshot {
-            state_id: StateId::from_bits(0),
-            captured_at_ms,
-            app_name,
-            nodes,
-        })
+        let accessible = match AccessibleProxy::builder(registry)
+            .destination("org.a11y.atspi.Registry")
+            .unwrap()
+            .path("/org/a11y/atspi/accessible/root")
+            .unwrap()
+            .build()
+            .await
+        {
+            Ok(a) => a,
+            Err(_) => return results,
+        };
+
+        let child_count = accessible.child_count().await.unwrap_or(0);
+        for i in 0..child_count.min(20) {
+            let child = match accessible.get_child_at_index(i).await {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let child_proxy = match AccessibleProxy::builder(registry)
+                .destination(child.0.as_str())
+                .unwrap()
+                .path(child.1.as_str())
+                .unwrap()
+                .build()
+                .await
+            {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            scrape(&child_proxy, registry, &mut results, None, 0).await;
+        }
+
+        results
     }
 
-    async fn scrape_node(
-        proxy: &atspi::proxy::accessible::AccessibleProxy<'_>,
-        out: &mut Vec<A11yNode>,
+    async fn scrape(
+        proxy: &atspi::accessible::AccessibleProxy<'_>,
+        conn: &zbus::Connection,
+        out: &mut Vec<crate::types::A11yNode>,
         parent_id: Option<i64>,
         depth: usize,
     ) {
-        if depth > 8 || out.len() > 500 {
+        use atspi::accessible::AccessibleProxy;
+        use atspi::component::ComponentProxy;
+
+        if depth > 6 || out.len() > 300 {
             return;
         }
-        use atspi::proxy::accessible::AccessibleProxy;
-        use atspi::proxy::component::ComponentProxy;
 
-        let role = proxy.get_role().await.map(|r| format!("{r:?}")).unwrap_or_default();
+        let role = proxy
+            .get_role()
+            .await
+            .map(|r| format!("{r:?}").to_lowercase())
+            .unwrap_or_default();
         let name = proxy.name().await.unwrap_or_default();
         let description = proxy.description().await.unwrap_or_default();
-        let states: Vec<String> = proxy
+        let states = proxy
             .get_state()
             .await
-            .map(|s| {
-                let sv: atspi::StateSet = s;
-                format!("{sv:?}")
-                    .split('|')
-                    .map(|s| s.trim().to_string())
-                    .collect()
-            })
+            .map(|s| vec![format!("{s:?}")])
             .unwrap_or_default();
 
-        let (x, y, w, h) = if let Ok(comp) = ComponentProxy::builder(proxy.connection())
-            .destination(proxy.destination().clone())
-            .unwrap_or_else(|_| ComponentProxy::builder(proxy.connection()))
-            .path(proxy.path().clone())
+        let (x, y, w, h) = if let Ok(comp) = ComponentProxy::builder(conn)
+            .destination(proxy.inner().destination().to_string().as_str())
+            .unwrap()
+            .path(proxy.inner().path().to_string().as_str())
+            .unwrap()
             .build()
             .await
         {
             comp.get_extents(atspi::CoordType::Screen)
                 .await
-                .map(|(x, y, w, h)| (x, y, w, h))
                 .unwrap_or((0, 0, 0, 0))
         } else {
             (0, 0, 0, 0)
         };
 
         let seq = out.len() as i32;
-        out.push(A11yNode {
+        out.push(crate::types::A11yNode {
             row_id: 0,
             snapshot_id: 0,
             role,
@@ -155,29 +164,26 @@ mod linux {
         });
 
         let my_id = out.len() as i64 - 1;
-
         let child_count = proxy.child_count().await.unwrap_or(0);
-        for i in 0..child_count.min(30) {
-            if let Ok(child) = proxy.get_child_at_index(i).await {
-                if let Ok(child_proxy) = AccessibleProxy::builder(proxy.connection())
-                    .destination(child.name)
-                    .unwrap_or_else(|_| {
-                        AccessibleProxy::builder(proxy.connection())
-                    })
-                    .path(child.path)
-                    .build()
-                    .await
-                {
-                    Box::pin(scrape_node(&child_proxy, out, Some(my_id), depth + 1)).await;
-                }
+
+        for i in 0..child_count.min(20) {
+            let child = match proxy.get_child_at_index(i).await {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            if let Ok(child_proxy) = AccessibleProxy::builder(conn)
+                .destination(child.0.as_str())
+                .unwrap()
+                .path(child.1.as_str())
+                .unwrap()
+                .build()
+                .await
+            {
+                Box::pin(scrape(&child_proxy, conn, out, Some(my_id), depth + 1)).await;
             }
         }
     }
-
-    fn now_ms() -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64
-    }
 }
+
+#[cfg(target_os = "linux")]
+use std::ops::Deref;
