@@ -153,14 +153,18 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         raw = vl_call(shot_path, task_instr, history, vasp=vasp_text, sf_feedback=sf_feedback)
         history.append({"role": "assistant", "content": raw})
 
-        if raw.upper().startswith("DONE") or raw.upper().startswith("FAIL"):
+        if raw.upper().startswith("DONE"):
+            env.step("DONE", pause=0.5)
+            break
+        if raw.upper().startswith("FAIL"):
+            env.step("FAIL", pause=0.5)
             break
 
         action_str = action_to_pyautogui(raw)
         if not action_str:
             break
 
-        obs, reward, done, info = env.step(action_str)
+        obs, reward, done, info = env.step(action_str, pause=0.5)
 
         if augmented:
             shot_after = str(out_dir / f"{session_id}-s{step:02d}b.png")
@@ -263,7 +267,7 @@ def main():
             path_to_vm=args.vm_path,
             provider_name=args.provider,
             action_space="pyautogui",
-            observation_type="screenshot",
+            require_a11y_tree=False,
             headless=True,
         )
 
