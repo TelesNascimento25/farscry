@@ -238,6 +238,7 @@ struct RecordingAdapter {
     pipeline: Arc<Pipeline>,
     recorder: Arc<Mutex<Option<SessionRecorder>>>,
     last_effect: Arc<Mutex<Option<farscry_mcp::ActionEffect>>>,
+    consecutive_sf: Arc<Mutex<usize>>,
 }
 
 impl RecordingAdapter {
@@ -246,7 +247,15 @@ impl RecordingAdapter {
             pipeline,
             recorder,
             last_effect: Arc::new(Mutex::new(None)),
+            consecutive_sf: Arc::new(Mutex::new(0)),
         }
+    }
+
+    fn consecutive_sf_count(&self) -> usize {
+        *self
+            .consecutive_sf
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
     }
 }
 
@@ -264,6 +273,10 @@ impl farscry_mcp::PipelineOps for RecordingAdapter {
         self.last_effect.lock().ok().and_then(|mut g| g.take())
     }
 
+    fn consecutive_sf_count(&self) -> usize {
+        self.consecutive_sf_count()
+    }
+
     fn process(&self, image_path: &str, after_action: bool) -> Result<VaspOutput, String> {
         if after_action {
             self.mark_action();
@@ -274,6 +287,12 @@ impl farscry_mcp::PipelineOps for RecordingAdapter {
             if let Some(rec) = guard.as_mut() {
                 let effect = rec.consume_action_effect(output.state_id);
                 if let Some(eff) = effect {
+                    if let Ok(mut csf) = self.consecutive_sf.lock() {
+                        match &eff {
+                            farscry_mcp::ActionEffect::SilentFailure { .. } => *csf += 1,
+                            farscry_mcp::ActionEffect::Changed { .. } => *csf = 0,
+                        }
+                    }
                     if let Ok(mut eg) = self.last_effect.lock() {
                         *eg = Some(eff);
                     }

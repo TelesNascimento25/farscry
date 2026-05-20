@@ -26,6 +26,10 @@ pub trait PipelineOps: Clone + Send + 'static {
         None
     }
 
+    fn consecutive_sf_count(&self) -> usize {
+        0
+    }
+
     fn diff(
         &self,
         before: &VaspOutput,
@@ -263,7 +267,7 @@ mod tests {
         let tools = &response["result"]["tools"];
         assert!(tools.is_array());
         let tools_arr = tools.as_array().unwrap();
-        assert_eq!(tools_arr.len(), 3);
+        assert_eq!(tools_arr.len(), 4);
 
         let tool_names: Vec<&str> = tools_arr
             .iter()

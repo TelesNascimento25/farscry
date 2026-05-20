@@ -59,7 +59,8 @@ impl<P: PipelineOps> McpServer<P> {
             "tools": [
                 Self::extract_tool_schema(),
                 Self::diff_tool_schema(),
-                Self::mark_action_tool_schema()
+                Self::mark_action_tool_schema(),
+                Self::checkpoint_tool_schema()
             ]
         }))
     }
@@ -111,6 +112,23 @@ impl<P: PipelineOps> McpServer<P> {
         })
     }
 
+    fn checkpoint_tool_schema() -> Value {
+        serde_json::json!({
+            "name": "farscry_checkpoint",
+            "description": "Atomic checkpoint: records the current state_id as 'before action' AND extracts VASP from the provided screenshot in a single call. Use this instead of calling farscry_mark_action + farscry_extract separately. Returns VASP + state_id_before so you can detect silent failures on the next farscry_extract call.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "image_path": {
+                        "type": "string",
+                        "description": "Absolute path to the current screenshot"
+                    }
+                },
+                "required": ["image_path"]
+            }
+        })
+    }
+
     fn diff_tool_schema() -> Value {
         serde_json::json!({
             "name": "farscry_diff",
@@ -145,6 +163,7 @@ impl<P: PipelineOps> McpServer<P> {
             "farscry_extract" => self.handle_mcp_extract_tool(&arguments).await,
             "farscry_diff" => self.handle_mcp_diff_tool(&arguments).await,
             "farscry_mark_action" => self.handle_mcp_mark_action().await,
+            "farscry_checkpoint" => self.handle_mcp_checkpoint(&arguments).await,
             other => Err(mcp_error(-32602, &format!("Unknown tool: {other}"))),
         }
     }
@@ -187,11 +206,10 @@ impl<P: PipelineOps> McpServer<P> {
         })
         .await
         .map_err(|e| mcp_error(-32000, &format!("Spawn error: {e}")))?;
-        let effect = self
-            .pipeline
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .last_action_effect();
+        let (effect, consec_sf) = {
+            let p = self.pipeline.lock().unwrap_or_else(|p| p.into_inner());
+            (p.last_action_effect(), p.consecutive_sf_count())
+        };
         match result {
             Ok(output) => {
                 let auto_diff = self.compute_auto_diff(&output).await;
@@ -210,14 +228,29 @@ impl<P: PipelineOps> McpServer<P> {
                     None => vasp_text,
                 };
                 let text = match effect {
-                    Some(crate::ActionEffect::SilentFailure { before, after }) => format!(
-                        "{text}\n\n\
-                        ⚠ SILENT_FAILURE DETECTED\n\
-                          action had no visual effect\n\
-                          state_id_before: {before}\n\
-                          state_id_after:  {after}\n\
-                          recommendation: this action changed nothing — try a different approach"
-                    ),
+                    Some(crate::ActionEffect::SilentFailure { before, after }) => {
+                        let recommendation = match consec_sf {
+                            1 => "action had no visual effect — try a different approach",
+                            2 => "2nd consecutive silent failure — the target element may not be responding",
+                            3 => "3rd consecutive silent failure — consider scrolling, waiting, or checking if the element exists",
+                            4 => "4th consecutive silent failure — visual loop risk, try a completely different strategy",
+                            n => {
+                                if n >= 5 {
+                                    "⚠ VISUAL LOOP RISK: 5+ consecutive actions with no effect — agent may be stuck, escalate or abort"
+                                } else {
+                                    "action had no visual effect — try a different approach"
+                                }
+                            }
+                        };
+                        format!(
+                            "{text}\n\n\
+                            ⚠ SILENT_FAILURE DETECTED (consecutive: {consec_sf})\n\
+                              action had no visual effect\n\
+                              state_id_before: {before}\n\
+                              state_id_after:  {after}\n\
+                              recommendation: {recommendation}"
+                        )
+                    }
                     Some(crate::ActionEffect::Changed { before, after }) => format!(
                         "{text}\n\n\
                         ✓ action_effect: confirmed\n\
@@ -284,6 +317,49 @@ impl<P: PipelineOps> McpServer<P> {
                 .to_string(),
         };
         Ok(crate::helpers::tool_result_text(&msg))
+    }
+
+    async fn handle_mcp_checkpoint(&self, arguments: &Value) -> Result<Value, Value> {
+        let image_path = arguments
+            .get("image_path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| mcp_error(-32602, "Missing required argument: image_path"))?
+            .to_string();
+        let (img_w, img_h) = image::image_dimensions(&image_path).unwrap_or((1920, 1080));
+        let image_path_for_fmt = image_path.clone();
+        let state_id_before = self
+            .pipeline
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .mark_action();
+        let pipeline = self.pipeline.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            pipeline
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .process(&image_path, false)
+        })
+        .await
+        .map_err(|e| mcp_error(-32000, &format!("Spawn error: {e}")))?;
+        match result {
+            Ok(output) => {
+                *self.last_state.lock().unwrap_or_else(|p| p.into_inner()) = Some(output.clone());
+                let vasp_text = farscry_formatter::VaspFormatter::format_vasp(
+                    &output,
+                    &image_path_for_fmt,
+                    img_w,
+                    img_h,
+                );
+                let sid_line = match state_id_before {
+                    Some(sid) => format!("\nstate_id_before: {sid}\nTake your action, then call farscry_extract(after_action=true) to detect silent failures."),
+                    None => "\nnote: no prior state — this is the first checkpoint.".to_string(),
+                };
+                Ok(tool_result_text(&format!("{vasp_text}{sid_line}")))
+            }
+            Err(e) => Ok(tool_result_error(&format!(
+                "farscry_checkpoint failed: {e}"
+            ))),
+        }
     }
 
     async fn handle_mcp_diff_tool(&self, arguments: &Value) -> Result<Value, Value> {

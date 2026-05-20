@@ -63,6 +63,33 @@ fn print_human(r: &SessionAnalysis) {
             r.max_consecutive_sf
         );
     }
+    let cost_per_1k_tokens: f64 = 0.003;
+    let wasted_tokens = r.sf_count * 900;
+    let wasted_cost = wasted_tokens as f64 / 1000.0 * cost_per_1k_tokens;
+    let loop_cost =
+        r.avg_tokens_burned_in_loops * r.visual_loop_sessions as f64 / 1000.0 * cost_per_1k_tokens;
+    if wasted_tokens > 0 || r.avg_tokens_burned_in_loops > 0.0 {
+        println!();
+        println!("  Estimated waste (Claude Sonnet @ $3/MTok):");
+        println!(
+            "    Silent failures: ~{} tokens  ≈ ${:.4}/corpus",
+            wasted_tokens, wasted_cost
+        );
+        if r.avg_tokens_burned_in_loops > 0.0 {
+            println!(
+                "    Visual loops:    ~{} tokens  ≈ ${:.4}/corpus",
+                (r.avg_tokens_burned_in_loops * r.visual_loop_sessions as f64) as u64,
+                loop_cost
+            );
+        }
+        let daily_sessions = 1000u64;
+        let daily_waste =
+            (wasted_cost + loop_cost) / r.total_sessions.max(1) as f64 * daily_sessions as f64;
+        println!(
+            "    At {daily_sessions} sessions/day: ~${:.2}/day in wasted API calls",
+            daily_waste
+        );
+    }
     println!();
     println!("FAILURE PATTERN ANALYSIS");
     println!("{}", "\u{2500}".repeat(50));
