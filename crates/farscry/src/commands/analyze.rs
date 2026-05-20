@@ -39,14 +39,30 @@ fn print_human(r: &SessionAnalysis) {
     let failed = r.failed_sessions;
     let successful = r.total_sessions.saturating_sub(failed);
     println!(
-        "Analyzed: {} failed sessions, {} successful sessions",
-        failed, successful
+        "Analyzed: {} sessions  ({} successful, {} failed)",
+        r.total_sessions, successful, failed
     );
     println!();
-    println!("ACTION EFFECT RATE (AER)");
+    println!("TASK COMPLETION RATE  [primary metric]");
     println!("{}", "\u{2500}".repeat(50));
     println!(
-        "  AER:    {:.1}%  ({} effects / {} actions)",
+        "  TCR: {:.1}%  ({} / {} sessions completed)",
+        r.tcr * 100.0,
+        successful,
+        r.total_sessions
+    );
+    if r.sessions_with_0_actions > 0 {
+        println!(
+            "  \u{26a0} {} session(s) had 0 recorded actions \u{2014} excluded from AER, \
+             verify task completion manually",
+            r.sessions_with_0_actions
+        );
+    }
+    println!();
+    println!("ACTION EFFECT RATE  [diagnostic \u{2014} not primary]");
+    println!("{}", "\u{2500}".repeat(50));
+    println!(
+        "  AER:     {:.1}%  ({} effects / {} actions)",
         r.aer * 100.0,
         r.ae_count,
         r.total_actions
@@ -57,6 +73,9 @@ fn print_human(r: &SessionAnalysis) {
         r.sf_count,
         r.total_actions
     );
+    if r.total_actions == 0 {
+        println!("  \u{26a0} No action markers found \u{2014} run corpus with farscry augment enabled.");
+    }
     if r.max_consecutive_sf > 0 {
         println!(
             "  Max consecutive SF: {} actions in a row",
@@ -189,6 +208,9 @@ fn print_json(r: &SessionAnalysis) {
         "total_sessions": r.total_sessions,
         "failed_sessions": failed,
         "successful_sessions": successful,
+        "tcr": r.tcr,
+        "tcr_pct": (r.tcr * 100.0) as u32,
+        "sessions_with_0_actions": r.sessions_with_0_actions,
         "aer": r.aer,
         "aer_pct": (r.aer * 100.0) as u32,
         "sf_rate": r.sf_rate,

@@ -18,6 +18,8 @@ pub struct SessionAnalysis {
     pub aer: f32,
     pub sf_rate: f32,
     pub max_consecutive_sf: usize,
+    pub tcr: f32,
+    pub sessions_with_0_actions: usize,
 }
 
 pub struct FailurePattern {
@@ -239,6 +241,17 @@ fn classify_and_analyze(
         .max()
         .unwrap_or(0);
 
+    let successful_sessions = total_sessions.saturating_sub(failed_sessions);
+    let tcr = if total_sessions > 0 {
+        successful_sessions as f32 / total_sessions as f32
+    } else {
+        0.0
+    };
+    let sessions_with_0_actions = sessions
+        .iter()
+        .filter(|s| s.sf_count + s.ae_count == 0)
+        .count();
+
     let failure_patterns = build_failure_patterns(&failed_subset, failed_sessions);
     Ok(SessionAnalysis {
         total_sessions,
@@ -253,6 +266,8 @@ fn classify_and_analyze(
         aer,
         sf_rate,
         max_consecutive_sf,
+        tcr,
+        sessions_with_0_actions,
     })
 }
 
