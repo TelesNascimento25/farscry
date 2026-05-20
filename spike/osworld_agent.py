@@ -621,6 +621,67 @@ def vl_checkpoint(screenshot_path: str, task: str, temperature: float = 0.0) -> 
         return False
 
 
+def annotate_screenshot(
+    shot_path: str,
+    tried_coords: list[tuple[int, int]],
+    untried_elements: list[dict],
+) -> str:
+    """Draw visual feedback on screenshot:
+    - Red circle where model has been clicking (stuck)
+    - Green circles for untried elements
+    Returns path to annotated image."""
+    try:
+        from PIL import Image, ImageDraw
+        img = Image.open(shot_path).convert("RGB")
+        draw = ImageDraw.Draw(img, "RGBA")
+
+        for x, y in tried_coords[-6:]:
+            r = 22
+            draw.ellipse([x-r, y-r, x+r, y+r], outline=(220, 30, 30, 255), width=4)
+            draw.line([x-r, y-r, x+r, y+r], fill=(220, 30, 30, 220), width=3)
+            draw.line([x+r, y-r, x-r, y+r], fill=(220, 30, 30, 220), width=3)
+
+        for e in untried_elements[:4]:
+            x, y = e["x"], e["y"]
+            r = 18
+            draw.ellipse([x-r, y-r, x+r, y+r], outline=(30, 200, 60, 255), width=4)
+            draw.ellipse([x-4, y-4, x+4, y+4], fill=(30, 200, 60, 255))
+
+        out = shot_path.replace(".png", "_annotated.png")
+        img.save(out)
+        return out
+    except Exception:
+        return shot_path
+
+
+def vl_call_text_only(task: str, a11y_context: str, stuck_hint: str = "") -> str:
+    """VL call WITHOUT screenshot — used when visual loop detected.
+    Forces model to reason from a11y structure only, breaking visual anchor."""
+    parts = [
+        f"Task: {task}",
+        "You are STUCK in a visual loop. The screenshot is hidden to force new thinking.",
+    ]
+    if stuck_hint:
+        parts.append(stuck_hint)
+    if a11y_context:
+        parts.append(a11y_context)
+    parts.append("Based ONLY on the UI structure above, what is the next logical action? Output one pyautogui statement.")
+
+    messages = [
+        {"role": "system", "content": SYSTEM_AUG},
+        {"role": "user", "content": "\n\n".join(parts)},
+    ]
+    try:
+        r = requests.post(f"{VL_SERVER}/v1/chat/completions",
+                          json={"model": "qwen2.5-vl", "messages": messages,
+                                "max_tokens": 128, "temperature": 0.3},
+                          timeout=180)
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return ""
+
+
 def vl_call(screenshot_path: str, task: str, history: list,
             a11y_context: str = "", sf_feedback: str = "",
             temperature: float = 0.0) -> str:
@@ -953,13 +1014,26 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 if len(buckets) <= 3:
                     micro_loop_count += 1
                     if micro_loop_count >= 2:
-                        sf_feedback = (
-                            "You are stuck in a loop. "
-                            "Try a completely different approach. "
-                            "Look for other elements on screen."
-                        )
                         total_escapes += 1
-                        print(f"  [s{step:02d}] MICRO-LOOP → hint + temp↑ ({0.1*total_escapes:.1f})")
+                        zone_y = sum(cy for _, cy in action_coord_history[-6:]) / max(len(action_coord_history[-6:]), 1)
+                        zone_untried = [
+                            e for e in elements
+                            if e.get("enabled", True)
+                            and e["name"].lower() not in tried_names
+                            and abs(e["y"] - zone_y) < 100
+                        ]
+                        annotated = annotate_screenshot(
+                            shot_path,
+                            tried_coords=list(action_coord_history[-6:]),
+                            untried_elements=zone_untried[:4],
+                        )
+                        print(f"  [s{step:02d}] MICRO-LOOP → annotated screenshot (🔴 tried, 🟢 untried)")
+                        sf_feedback = (
+                            "RED X marks = where you have been clicking repeatedly (not working).\n"
+                            "GREEN circles = elements you have NOT tried yet.\n"
+                            "Click a GREEN circle instead."
+                        )
+                        shot_path = annotated
                 else:
                     micro_loop_count = 0
 
