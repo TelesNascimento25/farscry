@@ -480,6 +480,45 @@ def _parse_click_coords(action_str: str) -> tuple[int, int] | None:
     return None
 
 
+def _phash_hamming(id1: str, id2: str) -> int:
+    try:
+        h1 = int(id1.replace("phash:", "").replace("0x", ""), 16)
+        h2 = int(id2.replace("phash:", "").replace("0x", ""), 16)
+        return bin(h1 ^ h2).count("1")
+    except Exception:
+        return 0
+
+
+def explore_dialogs(a11y_elements: list[dict], env, needs_a11y: bool) -> dict[str, str]:
+    tab_roles = {"page-tab", "tab", "page-tab-list", "pagetab", "tabitem"}
+    tabs = [
+        e for e in a11y_elements
+        if e.get("role", "") in tab_roles and e.get("name", "").strip()
+    ]
+    if not tabs:
+        return {}
+
+    vocab: dict[str, str] = {}
+    for tab in tabs[:5]:
+        try:
+            obs_t, _, _, _ = env.step(
+                f"pyautogui.click({tab['x']}, {tab['y']})", pause=0.3
+            )
+            a11y_xml = obs_t.get("accessibility_tree") if (obs_t and needs_a11y) else None
+            if a11y_xml:
+                sub_els = parse_a11y_tree(a11y_xml)
+                for e in sub_els:
+                    name = e.get("name", "").lower().strip()
+                    if name:
+                        vocab[name] = (
+                            f"{tab['name']} tab → {e['name']} "
+                            f"→ click({e['x']}, {e['y']})"
+                        )
+        except Exception:
+            continue
+    return vocab
+
+
 def run_task(env, task_id: str, task_instr: str, task_config: dict,
              max_steps: int, augmented: bool, out_dir: Path,
              a11y_only: bool = False, with_context: bool = False,
@@ -614,12 +653,14 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 buckets = {(round(x / 10) * 10, round(y / 10) * 10) for x, y in recent}
                 if len(buckets) <= 2:
                     micro_loop_count += 1
-                    if micro_loop_count >= 3 and not sf_feedback:
+                    if micro_loop_count >= 3:
                         sf_feedback = (
-                            "You are clicking the same 2 spots repeatedly. "
-                            "This is not working. Try a completely different approach."
+                            "You are stuck in a loop. "
+                            "Try a completely different approach. "
+                            "Look for other elements on screen."
                         )
-                        print(f"  [s{step:02d}] MICRO-LOOP detected → injecting hint")
+                        total_escapes += 1
+                        print(f"  [s{step:02d}] MICRO-LOOP → hint + temp↑ ({0.1*total_escapes:.1f})")
                 else:
                     micro_loop_count = 0
 
@@ -628,9 +669,28 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         if os.path.exists(shot_after) and (a11y_only or augmented):
             state_after, _ = farscry_state(shot_after)
             if state_before and state_after and state_before != state_after:
-                if vl_checkpoint(shot_after, task_instr):
-                    print(f"  [s{step:02d}] CHECKPOINT: task complete → stopping early")
-                    done = True
+                hamming = _phash_hamming(state_before, state_after)
+                if hamming > 15:
+                    if vl_checkpoint(shot_after, task_instr):
+                        print(f"  [s{step:02d}] CHECKPOINT (Δ={hamming}): done → stopping early")
+                        done = True
+                    elif (a11y_only or with_submenu) and obs and needs_a11y:
+                        a11y_xml = obs.get("accessibility_tree")
+                        if a11y_xml:
+                            new_els = parse_a11y_tree(a11y_xml)
+                            dialog_vocab = explore_dialogs(new_els, env, needs_a11y)
+                            if dialog_vocab:
+                                kw = extract_keywords(task_instr)
+                                new_matches = [
+                                    path for vname, path in dialog_vocab.items()
+                                    if any(k in vname for k in kw)
+                                ]
+                                if new_matches:
+                                    extra = "\nDialog contents found:\n" + "\n".join(
+                                        f"  - {m}" for m in new_matches[:5]
+                                    )
+                                    a11y_context += extra
+                                    print(f"  [s{step:02d}] DIALOG explored: {len(new_matches)} matches")
 
         if augmented:
             if os.path.exists(shot_after):
@@ -704,7 +764,7 @@ def _state_bits(state_id: str) -> int:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--mode", choices=["run_a", "run_b_a11y", "run_b_context", "run_b_dynamic", "run_b_submenu", "run_b"], required=True)
+    p.add_argument("--mode", choices=["run_a", "run_b_a11y", "run_b_context", "run_b_dynamic", "run_b_submenu", "run_b_full", "run_b"], required=True)
     p.add_argument("--tasks", type=Path, required=True)
     p.add_argument("--n", type=int, default=30)
     p.add_argument("--max-steps", type=int, default=15)
@@ -717,10 +777,11 @@ def main():
     from desktop_env.desktop_env import DesktopEnv
 
     augmented     = args.mode == "run_b"
-    a11y_only     = args.mode in ("run_b_a11y", "run_b_context", "run_b_dynamic", "run_b_submenu")
+    a11y_only     = args.mode in ("run_b_a11y", "run_b_context", "run_b_dynamic",
+                                   "run_b_submenu", "run_b_full")
     with_context  = args.mode == "run_b_context"
-    with_dynamic  = args.mode == "run_b_dynamic"
-    with_submenu  = args.mode == "run_b_submenu"
+    with_dynamic  = args.mode in ("run_b_dynamic", "run_b_full")
+    with_submenu  = args.mode in ("run_b_submenu", "run_b_full")
     needs_a11y    = augmented or a11y_only
     args.result_dir.mkdir(parents=True, exist_ok=True)
 
