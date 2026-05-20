@@ -803,9 +803,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             a11y_xml = obs.get("accessibility_tree") if obs else None
             task_kw  = extract_keywords(task_instr)
 
+            elements  = parse_a11y_tree(a11y_xml) if a11y_xml else []
             sem_state = extract_semantic_state(a11y_xml) if a11y_xml else \
                         {"interactive": [], "content": [], "values": [], "actions": {}}
-            elements  = sem_state["interactive"]
 
             live_ctx  = semantic_state_to_context(sem_state, task_kw)
             precond   = detect_preconditions(elements, task_kw)
