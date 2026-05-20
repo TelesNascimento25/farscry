@@ -255,6 +255,70 @@ Accessible UI elements are listed with exact coordinates. Use them for clicks.
 If you receive a [SILENT_FAILURE] warning, try a completely different action."""
 
 
+def parse_focused_subtree(xml_str: str) -> list[dict]:
+    """
+    Returns interactive elements INSIDE the focused container.
+    Traverses the AT-SPI XML tree hierarchically — same logic as
+    farscry-a11y SQLite recursive CTE, but directly from XML.
+    Universal: works for any app, dialog, menu, window.
+    """
+    if not xml_str:
+        return []
+    try:
+        root = ET.fromstring(xml_str)
+    except ET.ParseError:
+        return []
+
+    CONTAINER_ROLES = {"dialog", "frame", "window", "menu", "menubar",
+                       "file-chooser", "color-chooser", "font-chooser", "alert"}
+
+    focused_node = None
+    for node in root.iter():
+        role = (node.tag.split("}")[-1] if "}" in node.tag else node.tag).lower()
+        focused = node.get("{%s}focused" % _A11Y_STATE_NS, "false") == "true"
+        showing = node.get("{%s}showing" % _A11Y_STATE_NS, "false") == "true"
+        if focused and showing and role in CONTAINER_ROLES:
+            focused_node = node
+            break
+
+    if focused_node is None:
+        return []
+
+    results: list[dict] = []
+    for node in focused_node.iter():
+        tag = node.tag.split("}")[-1] if "}" in node.tag else node.tag
+        role = tag.lower()
+        if role not in INTERACTIVE_ROLES:
+            continue
+        showing = node.get("{%s}showing" % _A11Y_STATE_NS, "false") == "true"
+        if not showing:
+            continue
+        name = (node.get("name") or node.text or "").strip()
+        if not name:
+            continue
+        coord_str = node.get("{%s}screencoord" % _A11Y_COMP_NS, "")
+        size_str  = node.get("{%s}size" % _A11Y_COMP_NS, "")
+        if not coord_str or not size_str:
+            continue
+        try:
+            x, y = map(int, _re.findall(r"-?\d+", coord_str)[:2])
+            w, h = map(int, _re.findall(r"-?\d+", size_str)[:2])
+        except (ValueError, IndexError):
+            continue
+        if w <= 0 or h <= 0 or x < 0 or y < 0:
+            continue
+        enabled = node.get("{%s}enabled" % _A11Y_STATE_NS, "true") == "true"
+        results.append({
+            "role": role, "name": name[:60],
+            "x": x + w // 2, "y": y + h // 2,
+            "enabled": enabled,
+        })
+        if len(results) >= 20:
+            break
+
+    return results
+
+
 def parse_a11y_tree(xml_str: str, max_items: int = 25) -> list[dict]:
     if not xml_str:
         return []
@@ -1015,18 +1079,24 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                     micro_loop_count += 1
                     if micro_loop_count >= 2:
                         total_escapes += 1
-                        zone_y = sum(cy for _, cy in action_coord_history[-6:]) / max(len(action_coord_history[-6:]), 1)
-                        zone_untried = [
+                        a11y_xml_now = obs.get("accessibility_tree") if obs and needs_a11y else None
+                        focused_els = parse_focused_subtree(a11y_xml_now) if a11y_xml_now else []
+                        focused_untried = [
+                            e for e in focused_els
+                            if e.get("enabled", True)
+                            and e["name"].lower() not in tried_names
+                        ] if focused_els else [
                             e for e in elements
                             if e.get("enabled", True)
                             and e["name"].lower() not in tried_names
-                            and abs(e["y"] - zone_y) < 100
                         ]
                         annotated = annotate_screenshot(
                             shot_path,
                             tried_coords=list(action_coord_history[-6:]),
-                            untried_elements=zone_untried[:4],
+                            untried_elements=focused_untried[:4],
                         )
+                        src = "focused container" if focused_els else "fallback all"
+                        print(f"  [s{step:02d}] annotated: {len(focused_untried)} untried from {src}")
                         print(f"  [s{step:02d}] MICRO-LOOP → annotated screenshot (🔴 tried, 🟢 untried)")
                         sf_feedback = (
                             "RED X marks = where you have been clicking repeatedly (not working).\n"
