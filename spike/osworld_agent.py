@@ -75,7 +75,7 @@ def vl_call(screenshot_path: str, task: str, history: list,
     r = requests.post(f"{VL_SERVER}/v1/chat/completions",
                       json={"model": "qwen2.5-vl", "messages": messages,
                             "max_tokens": 128, "temperature": 0.0},
-                      timeout=60)
+                      timeout=180)
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"].strip()
 
