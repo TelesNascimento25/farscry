@@ -1,4 +1,19 @@
 
+## Regras de Monitoramento de Experimentos
+
+REGRA ABSOLUTA para monitorar processos longos (OSWorld, SSH, benchmarks):
+
+1. **Poll a cada 8s** — nunca sleep > 30s entre checks
+2. **Para IMEDIATAMENTE** se `stuck >= 6` (48s) E processo já iniciou (`LINES > 10`)
+3. **Ao parar**: verificar wchan + ss -tp + tail do log ANTES de qualquer ação
+4. **Limpar containers velhos** antes de cada run: `docker ps --format "{{.Names}}" | grep -v open-webui | xargs -r docker stop`
+5. **Limpar log antigo**: `> /tmp/run.log` antes de lançar novo run
+6. **Timeouts em TODA chamada bloqueante**: env.step(45s), vl_call(60s), post-step(70s)
+
+Skill de referência: `~/.config/devin/skills/monitor-experiments/SKILL.md`
+
+---
+
 ## Publication Standard
 
 REGRA ABSOLUTA: só publicar quando estivermos em 70%+ de chance de impacto real.
