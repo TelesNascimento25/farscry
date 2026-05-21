@@ -1339,7 +1339,11 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
 
         shot_after = str(out_dir / f"{session_id}-s{step:02d}b.png")
         save_screenshot(obs, shot_after)
-        if os.path.exists(shot_after) and (a11y_only or augmented):
+        # Timeout guard for entire post-step analysis block (farscry + vl_checkpoint)
+        signal.signal(signal.SIGALRM, lambda s, f: (_ for _ in ()).throw(TimeoutError("post-step timeout")))
+        signal.alarm(70)
+        try:
+          if os.path.exists(shot_after) and (a11y_only or augmented):
             state_after, _ = farscry_state(shot_after)
             if a11y_only and obs and needs_a11y:
                 new_xml = obs.get("accessibility_tree")
@@ -1387,6 +1391,11 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                                     )
                                     submenu_context = (submenu_context or "") + extra
                                     print(f"  [s{step:02d}] DIALOG {len(matches)} matches")
+
+        except TimeoutError as _te:
+            print(f"  [s{step:02d}] POST-STEP TIMEOUT: {_te}")
+        finally:
+            signal.alarm(0)
 
         if augmented:
             if os.path.exists(shot_after):
