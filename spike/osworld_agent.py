@@ -869,7 +869,7 @@ def save_screenshot(obs: dict, path: str):
             pass
 
 
-def action_to_pyautogui(raw: str) -> str | None:
+def action_to_pyautogui(raw: str, no_image: bool = False) -> str | None:
     raw = raw.strip().splitlines()[0].strip()
     if raw.upper().startswith("DONE") or raw.upper().startswith("FAIL"):
         return None
@@ -878,10 +878,10 @@ def action_to_pyautogui(raw: str) -> str | None:
         m = _re.search(r"start_box=.?\(?(\d+)[,\s]+(\d+)", raw)
         if m:
             rx, ry = int(m.group(1)), int(m.group(2))
-            # Distinguish: a11y-sourced coords are absolute (can be >1000);
-            # UI-TARS visual coords are normalized [0-1000].
-            # Heuristic: if either value > 1000, treat as absolute pixels directly.
-            if rx > 1000 or ry > 1000:
+            # no_image=True: model copied absolute coords from a11y_context → use directly
+            # no_image=False (visual): coords are normalized [0-1000] → scale to screen
+            # Fallback heuristic: >1000 is always absolute regardless of mode
+            if no_image or rx > 1000 or ry > 1000:
                 x, y = rx, ry
             else:
                 x = round(rx / 1000 * VL_SCREEN_W)
@@ -1177,7 +1177,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             env.step("FAIL", pause=0.5)
             break
 
-        action_str = action_to_pyautogui(clean)
+        action_str = action_to_pyautogui(clean, no_image=use_no_image)
         if not action_str:
             break
 
