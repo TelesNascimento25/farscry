@@ -20,6 +20,7 @@ import base64
 import json
 import os
 import re as _re
+import signal
 import struct
 import subprocess
 import time
@@ -1280,7 +1281,18 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         if not action_str:
             break
 
-        obs, reward, done, info = env.step(action_str, pause=0.5)
+        # Timeout guard: env.step can block indefinitely if VM freezes
+        def _timeout_handler(signum, frame):
+            raise TimeoutError("env.step timed out after 45s")
+        signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(45)
+        try:
+            obs, reward, done, info = env.step(action_str, pause=0.5)
+        except TimeoutError:
+            print(f"  [s{step:02d}] TIMEOUT — env.step blocked 45s, breaking")
+            break
+        finally:
+            signal.alarm(0)
         agent_step += 1
 
         coords = _parse_click_coords(action_str)
