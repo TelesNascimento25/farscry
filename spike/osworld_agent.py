@@ -1138,9 +1138,15 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 print(f"  [s{step:02d}] precond: {precond[:70]}")
 
             # Proactive text-input detection: when a rename/input dialog is visible
+            # Only "entry" role — excludes "text" (labels) and "textbox" (too broad)
+            # Also exclude GNOME shell elements by name/position
+            SHELL_NAMES = {"activities", "applications", "overview"}
             text_input_els = [
                 e for e in elements
-                if e["role"] in ("entry", "textbox", "text") and e.get("enabled", True)
+                if e["role"] == "entry"
+                and e.get("enabled", True)
+                and e["name"].lower() not in SHELL_NAMES
+                and e.get("y", 0) > 30  # exclude top bar elements (y < 30px)
             ]
             text_input_hint = ""
             if text_input_els:
