@@ -797,7 +797,8 @@ def vl_call_text_only(task: str, a11y_context: str, stuck_hint: str = "") -> str
 
 def vl_call(screenshot_path: str, task: str, history: list,
             a11y_context: str = "", sf_feedback: str = "",
-            temperature: float = 0.0) -> str:
+            temperature: float = 0.0,
+            no_image: bool = False) -> str:
     augmented = bool(a11y_context)
     parts = [f"Task: {task}"]
     if sf_feedback:
@@ -809,10 +810,14 @@ def vl_call(screenshot_path: str, task: str, history: list,
     messages = [{"role": "system", "content": SYSTEM_AUG if augmented else SYSTEM_BASE}]
     for h in history[-4:]:
         messages.append(h)
-    messages.append({"role": "user", "content": [
-        {"type": "text", "text": "\n".join(parts)},
-        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encode(screenshot_path)}"}},
-    ]})
+
+    if no_image or not screenshot_path or not os.path.exists(screenshot_path):
+        messages.append({"role": "user", "content": "\n".join(parts)})
+    else:
+        messages.append({"role": "user", "content": [
+            {"type": "text", "text": "\n".join(parts)},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encode(screenshot_path)}"}},
+        ]})
 
     r = requests.post(f"{VL_SERVER}/v1/chat/completions",
                       json={"model": "qwen2.5-vl", "messages": messages,
@@ -1099,7 +1104,8 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         print(f"  [s{step:02d}] a11y={n_elements}el  csf={consecutive_sf}  esc={total_escapes}  temp={temp:.1f}")
         raw = vl_call(shot_path, task_instr, history,
                       a11y_context=a11y_context, sf_feedback=sf_feedback,
-                      temperature=temp)
+                      temperature=temp,
+                      no_image=a11y_only)
         clean = raw.strip().splitlines()[0].strip()
         print(f"  [s{step:02d}] model → {clean[:80]}")
         history.append({"role": "assistant", "content": clean})
