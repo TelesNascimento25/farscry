@@ -309,9 +309,12 @@ def detect_dialog_next_action(focused_els: list[dict], tried_names: set[str], ta
             f"Now click the confirm button: \"{btn['name']}\" → pyautogui.click({btn['x']}, {btn['y']})"
         )
 
+    SHELL_EXCL = {"activities", "applications", "overview", "search"}
     text_inputs = [e for e in focused_els
-                   if e["role"] in ("entry", "textbox", "text")
-                   and e.get("enabled", True)]
+                   if e["role"] == "entry"
+                   and e.get("enabled", True)
+                   and e["name"].lower() not in SHELL_EXCL
+                   and e.get("y", 0) > 30]
     if text_inputs:
         inp = text_inputs[0]
         target = _extract_target_value(task_instr) if task_instr else ""
@@ -898,6 +901,8 @@ def save_screenshot(obs: dict, path: str):
 
 def action_to_pyautogui(raw: str, no_image: bool = False) -> str | None:
     raw = raw.strip().splitlines()[0].strip()
+    # Normalize malformed pyautogui prefixes: "pyautogui hotkey(...)" → "hotkey(...)"
+    raw = _re.sub(r'^pyautogui\s+', '', raw)
     if raw.upper().startswith("DONE") or raw.upper().startswith("FAIL"):
         return None
     # UI-TARS native formats: click/rightClick/doubleClick/type/scroll/hotkey/drag
