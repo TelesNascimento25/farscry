@@ -1160,14 +1160,14 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         except NameError:
             n_elements = 0
         print(f"  [s{step:02d}] a11y={n_elements}el  csf={consecutive_sf}  esc={total_escapes}  temp={temp:.1f}")
-        use_no_image = a11y_only and matched >= 2
+        # no_image=True when >=1 matched keyword: model copies absolute coords from a11y_context.
+        # no_image=False (visual) only when matched=0: model uses screenshot freely.
+        use_no_image = a11y_only and matched >= 1
         if use_no_image:
-            print(f"  [s{step:02d}] NO-IMAGE mode (matched={matched} ≥ 2)")
-        # When matched=0 and using visual mode, a11y_context with sidebar elements
-        # distracts the model away from what it sees in the screenshot.
-        # Only pass a11y_context when there are relevant elements (matched >= 1)
-        # OR when in no_image mode (where context is the only signal).
-        effective_ctx = a11y_context if (use_no_image or matched >= 1) else ""
+            print(f"  [s{step:02d}] NO-IMAGE mode (matched={matched} ≥ 1)")
+        # When matched=0: visual mode, no a11y_context (sidebar elements distract model).
+        # When matched>=1: no_image mode with a11y_context as the only signal.
+        effective_ctx = a11y_context if use_no_image else ""
         raw = vl_call(shot_path, task_instr, history,
                       a11y_context=effective_ctx, sf_feedback=sf_feedback,
                       temperature=temp,
