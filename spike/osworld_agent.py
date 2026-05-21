@@ -721,11 +721,11 @@ def encode(path: str) -> str:
 
 
 def vl_checkpoint(screenshot_path: str, task: str, temperature: float = 0.0) -> bool:
+    # UI-TARS format: image first
     messages = [
-        {"role": "system", "content": "Answer only YES or NO."},
         {"role": "user", "content": [
-            {"type": "text", "text": f"Task: {task}\n\nHas this task been completed? YES or NO."},
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encode(screenshot_path)}"}},
+            {"type": "text", "text": f"Task: {task}\n\nHas this task been completed? Answer only YES or NO."},
         ]},
     ]
     try:
@@ -776,20 +776,14 @@ def annotate_screenshot(
 def vl_call_text_only(task: str, a11y_context: str, stuck_hint: str = "") -> str:
     """VL call WITHOUT screenshot — used when visual loop detected.
     Forces model to reason from a11y structure only, breaking visual anchor."""
-    parts = [
-        f"Task: {task}",
-        "You are STUCK in a visual loop. The screenshot is hidden to force new thinking.",
-    ]
+    parts = [f"Task: {task}"]
     if stuck_hint:
         parts.append(stuck_hint)
     if a11y_context:
         parts.append(a11y_context)
-    parts.append("Based ONLY on the UI structure above, what is the next logical action? Output one pyautogui statement.")
 
-    messages = [
-        {"role": "system", "content": SYSTEM_AUG},
-        {"role": "user", "content": "\n\n".join(parts)},
-    ]
+    text = "\n".join(parts) + "\nAction:"
+    messages = [{"role": "user", "content": text}]
     try:
         r = requests.post(f"{VL_SERVER}/v1/chat/completions",
                           json={"model": VL_MODEL, "messages": messages,
@@ -805,32 +799,43 @@ def vl_call(screenshot_path: str, task: str, history: list,
             a11y_context: str = "", sf_feedback: str = "",
             temperature: float = 0.0,
             no_image: bool = False) -> str:
-    augmented = bool(a11y_context)
+    # UI-TARS format: image FIRST, then text; model completes after "Thought:"
     parts = [f"Task: {task}"]
     if sf_feedback:
         parts.append(sf_feedback)
     if a11y_context:
         parts.append(a11y_context)
-    parts.append("Next action:")
 
-    messages = [{"role": "system", "content": SYSTEM_AUG if augmented else SYSTEM_BASE}]
+    messages = []
     for h in history[-4:]:
         messages.append(h)
 
+    text_content = "\n".join(parts)
     if no_image or not screenshot_path or not os.path.exists(screenshot_path):
-        messages.append({"role": "user", "content": "\n".join(parts)})
+        # text-only: inject "Action:" trigger so model outputs structured action
+        messages.append({"role": "user", "content": text_content + "\nAction:"})
     else:
+        # UI-TARS: image BEFORE text, then "Thought:" trigger
         messages.append({"role": "user", "content": [
-            {"type": "text", "text": "\n".join(parts)},
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encode(screenshot_path)}"}},
+            {"type": "text", "text": text_content},
         ]})
+        # Prefill "Thought:" to get structured Thought+Action output
+        messages.append({"role": "assistant", "content": "Thought:"})
 
     r = requests.post(f"{VL_SERVER}/v1/chat/completions",
                       json={"model": VL_MODEL, "messages": messages,
-                            "max_tokens": 128, "temperature": temperature},
+                            "max_tokens": 256, "temperature": temperature},
                       timeout=180)
     r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"].strip()
+    raw = r.json()["choices"][0]["message"]["content"].strip()
+    # When prefilled with "Thought:", the response is the continuation
+    # Extract the Action: line for parsing
+    if "Action:" in raw:
+        for line in raw.split("\n"):
+            if line.strip().startswith("Action:"):
+                return line.strip()[len("Action:"):].strip()
+    return raw
 
 
 def farscry_state(screenshot_path: str) -> tuple[str, str]:
@@ -867,14 +872,45 @@ def action_to_pyautogui(raw: str) -> str | None:
     raw = raw.strip().splitlines()[0].strip()
     if raw.upper().startswith("DONE") or raw.upper().startswith("FAIL"):
         return None
+    # UI-TARS native formats: click/rightClick/doubleClick/type/scroll/hotkey/drag
     if "start_box=" in raw:
         m = _re.search(r"start_box=.?\(?(\d+)[,\s]+(\d+)", raw)
         if m:
             # UI-TARS normalizes [0-1000] → convert to absolute pixels
             x = round(int(m.group(1)) / 1000 * VL_SCREEN_W)
             y = round(int(m.group(2)) / 1000 * VL_SCREEN_H)
+            if raw.lower().startswith("rightclick") or raw.lower().startswith("right_click"):
+                return f"pyautogui.rightClick({x}, {y})"
+            if raw.lower().startswith("doubleclick") or raw.lower().startswith("double_click"):
+                return f"pyautogui.doubleClick({x}, {y})"
             return f"pyautogui.click({x}, {y})"
         return None
+    # UI-TARS type action: type(content='...')
+    if raw.startswith("type(") or raw.startswith("Type("):
+        m = _re.search(r"type\(content=['\"](.+?)['\"]\)", raw, _re.IGNORECASE)
+        if m:
+            text = m.group(1).replace("'", "\\'")
+            return f"pyautogui.typewrite('{text}', interval=0.05)"
+        return None
+    # UI-TARS hotkey: hotkey(key='ctrl c') or hotkey(key='ctrl', modifier='shift')
+    if raw.startswith("hotkey(") or raw.startswith("Hotkey("):
+        m = _re.search(r"key=['\"]([^'\"]+)['\"]", raw)
+        if m:
+            keys = m.group(1).split()
+            keys_str = ", ".join(f"'{k}'" for k in keys)
+            return f"pyautogui.hotkey({keys_str})"
+        return None
+    # UI-TARS scroll action
+    if raw.startswith("scroll("):
+        m = _re.search(r"start_box=.?\(?(\d+)[,\s]+(\d+).+?direction=['\"](\w+)['\"]", raw)
+        if m:
+            x = round(int(m.group(1)) / 1000 * VL_SCREEN_W)
+            y = round(int(m.group(2)) / 1000 * VL_SCREEN_H)
+            direction = m.group(3).lower()
+            clicks = -3 if direction == "down" else 3
+            return f"pyautogui.scroll({x}, {y}, clicks={clicks})"
+        return None
+    # Legacy formats
     if raw.startswith("click(") and "pyautogui." not in raw:
         m = _re.search(r"click\((\d+),\s*(\d+)\)", raw)
         if m:
@@ -959,6 +995,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
     action_coord_history: list[tuple[int, int]] = []
     micro_loop_count = 0
     submenu_context: str = ""
+    tried_names: set[str] = set()  # init here to avoid NameError in augmented mode
 
     obs = env.reset(task_config=task_config)
 
@@ -1306,7 +1343,8 @@ def _state_bits(state_id: str) -> int:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--mode", choices=["run_a", "run_b_a11y", "run_b_context", "run_b_dynamic",
-                                       "run_b_submenu", "run_b_full", "run_b_smart", "run_b"], required=True)
+                                       "run_b_submenu", "run_b_full", "run_b_smart", "run_b",
+                                       "run_c_vision"], required=True)
     p.add_argument("--tasks", type=Path, required=True)
     p.add_argument("--n", type=int, default=30)
     p.add_argument("--max-steps", type=int, default=15)
@@ -1318,12 +1356,13 @@ def main():
 
     from desktop_env.desktop_env import DesktopEnv
 
-    augmented     = args.mode == "run_b"
+    augmented     = args.mode in ("run_b", "run_c_vision")
     a11y_only     = args.mode in ("run_b_a11y", "run_b_context", "run_b_dynamic",
                                    "run_b_submenu", "run_b_full", "run_b_smart")
     with_context  = args.mode == "run_b_context"
-    with_dynamic  = args.mode in ("run_b_dynamic", "run_b_full", "run_b_smart")
-    with_submenu  = args.mode in ("run_b_submenu", "run_b_full", "run_b_smart")
+    with_dynamic  = args.mode in ("run_b_dynamic", "run_b_full", "run_b_smart", "run_c_vision")
+    with_submenu  = args.mode in ("run_b_submenu", "run_b_full", "run_b_smart", "run_c_vision")
+    # run_c_vision: always uses screenshot (a11y_only=False) + AT-SPI as text context
     needs_a11y    = augmented or a11y_only
     args.result_dir.mkdir(parents=True, exist_ok=True)
 
