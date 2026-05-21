@@ -863,12 +863,16 @@ def action_to_pyautogui(raw: str) -> str | None:
     raw = raw.strip().splitlines()[0].strip()
     if raw.upper().startswith("DONE") or raw.upper().startswith("FAIL"):
         return None
-    if "pyautogui." not in raw:
-        return None
     if "start_box=" in raw:
         m = _re.search(r"start_box=.?\(?(\d+)[,\s]+(\d+)", raw)
         if m:
             return f"pyautogui.click({m.group(1)}, {m.group(2)})"
+        return None
+    if raw.startswith("click(") and "pyautogui." not in raw:
+        m = _re.search(r"click\((\d+),\s*(\d+)\)", raw)
+        if m:
+            return f"pyautogui.click({m.group(1)}, {m.group(2)})"
+    if "pyautogui." not in raw:
         return None
     return raw
 
