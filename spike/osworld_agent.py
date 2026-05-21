@@ -661,6 +661,25 @@ def detect_preconditions(elements: list[dict], task_keywords: list[str]) -> str:
     return msg
 
 
+def _safe_env_step(env, action: str, pause: float = 0.5, timeout: int = 20):
+    """env.step with a hard timeout — returns None on timeout or error."""
+    result = [None]
+    def _handler(signum, frame):
+        raise TimeoutError(f"env.step timed out ({timeout}s): {action[:40]}")
+    old = signal.signal(signal.SIGALRM, _handler)
+    signal.alarm(timeout)
+    try:
+        result[0] = env.step(action, pause=pause)
+    except TimeoutError:
+        pass
+    except Exception:
+        pass
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+    return result[0]
+
+
 def explore_and_build_context(
     a11y_elements: list[dict], task_instr: str, env, needs_a11y: bool
 ) -> str:
@@ -675,9 +694,10 @@ def explore_and_build_context(
 
     for menu in root_menus[:5]:
         try:
-            obs_m, _, _, _ = env.step(
-                f"pyautogui.click({menu['x']}, {menu['y']})", pause=0.4
-            )
+            res = _safe_env_step(env, f"pyautogui.click({menu['x']}, {menu['y']})", pause=0.4)
+            if res is None:
+                continue
+            obs_m = res[0]
             a11y_xml = obs_m.get("accessibility_tree") if (obs_m and needs_a11y) else None
             if a11y_xml:
                 sub_els = parse_a11y_tree(a11y_xml)
@@ -689,7 +709,7 @@ def explore_and_build_context(
                             f"{menu['name']} → {item['name']} "
                             f"→ click({ix}, {iy})"
                         )
-            env.step("pyautogui.press('escape')", pause=0.2)
+            _safe_env_step(env, "pyautogui.press('escape')", pause=0.2)
         except Exception:
             continue
 
@@ -998,9 +1018,10 @@ def explore_dialogs(a11y_elements: list[dict], env, needs_a11y: bool) -> dict[st
     vocab: dict[str, str] = {}
     for tab in tabs[:5]:
         try:
-            obs_t, _, _, _ = env.step(
-                f"pyautogui.click({tab['x']}, {tab['y']})", pause=0.3
-            )
+            res = _safe_env_step(env, f"pyautogui.click({tab['x']}, {tab['y']})", pause=0.3)
+            if res is None:
+                continue
+            obs_t = res[0]
             a11y_xml = obs_t.get("accessibility_tree") if (obs_t and needs_a11y) else None
             if a11y_xml:
                 sub_els = parse_a11y_tree(a11y_xml)
@@ -1231,7 +1252,8 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                     print(f"    [augment] SF total={total_escapes+1} → history cleared")
 
                 print(f"    [augment] SF x{consecutive_sf} total={total_escapes+1} → {escape_action}")
-                obs, _, _, _ = env.step(escape_action, pause=1.0)
+                _r = _safe_env_step(env, escape_action, pause=1.0)
+                obs = _r[0] if _r else obs
                 sf_feedback_count += 1
                 total_escapes += 1
                 shot_path = str(out_dir / f"{session_id}-s{step:02d}r.png")
