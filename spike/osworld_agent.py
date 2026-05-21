@@ -1163,8 +1163,13 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         use_no_image = a11y_only and matched >= 2
         if use_no_image:
             print(f"  [s{step:02d}] NO-IMAGE mode (matched={matched} ≥ 2)")
+        # When matched=0 and using visual mode, a11y_context with sidebar elements
+        # distracts the model away from what it sees in the screenshot.
+        # Only pass a11y_context when there are relevant elements (matched >= 1)
+        # OR when in no_image mode (where context is the only signal).
+        effective_ctx = a11y_context if (use_no_image or matched >= 1) else ""
         raw = vl_call(shot_path, task_instr, history,
-                      a11y_context=a11y_context, sf_feedback=sf_feedback,
+                      a11y_context=effective_ctx, sf_feedback=sf_feedback,
                       temperature=temp,
                       no_image=use_no_image)
         clean = raw.strip().splitlines()[0].strip()
