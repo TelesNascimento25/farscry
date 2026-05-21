@@ -703,9 +703,11 @@ def format_a11y_context(elements: list[dict],
             lines.append("App procedures (HOW to use this app):")
             lines.append(app_ctx)
             lines.append("")
-    lines.append("UI elements (role → name → exact coords):")
+    lines.append("UI elements (USE THESE EXACT COORDINATES):")
     for e in elements:
-        lines.append(f"  {e['role']:12s} \"{e['name']}\" → ({e['x']}, {e['y']})")
+        lines.append(
+            f"  {e['role']:12s} \"{e['name']}\" → pyautogui.click({e['x']}, {e['y']})"
+        )
     return "\n".join(lines)
 
 
@@ -1102,10 +1104,13 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         except NameError:
             n_elements = 0
         print(f"  [s{step:02d}] a11y={n_elements}el  csf={consecutive_sf}  esc={total_escapes}  temp={temp:.1f}")
+        use_no_image = a11y_only and matched >= 2
+        if use_no_image:
+            print(f"  [s{step:02d}] NO-IMAGE mode (matched={matched} ≥ 2)")
         raw = vl_call(shot_path, task_instr, history,
                       a11y_context=a11y_context, sf_feedback=sf_feedback,
                       temperature=temp,
-                      no_image=a11y_only)
+                      no_image=use_no_image)
         clean = raw.strip().splitlines()[0].strip()
         print(f"  [s{step:02d}] model → {clean[:80]}")
         history.append({"role": "assistant", "content": clean})
