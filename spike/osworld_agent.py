@@ -811,8 +811,11 @@ def vl_call(screenshot_path: str, task: str, history: list,
 
     # Build messages: no history (UI-TARS stateless per step via a11y context)
     if no_image or not screenshot_path or not os.path.exists(screenshot_path):
-        # text-only: inject "Action:" trigger so model outputs structured action
-        messages = [{"role": "user", "content": text_content + "\nAction:"}]
+        # text-only: use assistant prefill to force model to copy a coord from a11y_context
+        messages = [
+            {"role": "user", "content": text_content},
+            {"role": "assistant", "content": "Action:"},
+        ]
     else:
         # UI-TARS: image BEFORE text, then "Thought:" prefill
         messages = [
@@ -830,12 +833,13 @@ def vl_call(screenshot_path: str, task: str, history: list,
                       timeout=180)
     r.raise_for_status()
     raw = r.json()["choices"][0]["message"]["content"].strip()
-    # When prefilled with "Thought:", the response is the continuation
+    # Prefilled with "Thought:" (visual) or "Action:" (no_image)
     # Extract the Action: line for parsing
     if "Action:" in raw:
         for line in raw.split("\n"):
             if line.strip().startswith("Action:"):
                 return line.strip()[len("Action:"):].strip()
+    # no_image mode: response IS the action (direct completion after "Action:" prefill)
     return raw
 
 
@@ -1110,14 +1114,34 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             if precond:
                 print(f"  [s{step:02d}] precond: {precond[:70]}")
 
+            # Direct scan: find task-keyword elements in current AT-SPI tree
+            # This catches cases where APPEARED missed them (timing/AT-SPI latency)
+            direct_hits = [
+                e for e in elements
+                if any(k in e["name"].lower() for k in task_kw)
+                and e.get("enabled", True)
+                and e["name"].strip()
+            ]
+            direct_hint = ""
+            if direct_hits and not appeared_signal:
+                direct_hint = (
+                    "Relevant elements found — use one of these:\n"
+                    + "\n".join(
+                        f"  - \"{e['name']}\" → pyautogui.click({e['x']}, {e['y']})"
+                        for e in direct_hits[:5]
+                    )
+                )
+
             ctx_parts = []
             if appeared_signal:
                 ctx_parts.append(appeared_signal)
+            elif direct_hint:
+                ctx_parts.append(direct_hint)
             elif untried_signal and len(tried_names) >= 3:
                 ctx_parts.append(untried_signal)
             if precond:
                 ctx_parts.append(precond)
-            if submenu_context and not appeared_signal:
+            if submenu_context and not appeared_signal and not direct_hint:
                 ctx_parts.append(submenu_context)
             if live_ctx:
                 ctx_parts.append(live_ctx)
