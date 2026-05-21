@@ -176,7 +176,7 @@ def semantic_state_to_context(state: dict, task_keywords: list[str]) -> str:
             lines.append(
                 f"  {e['role']:12} \"{e['name']}\"{val_str}"
                 f"{disabled_str}{state_str}{act_str}"
-                f" → ({e['x']}, {e['y']})"
+                f" → pyautogui.click({e['x']}, {e['y']})"
             )
         parts.append("\n".join(lines))
 
@@ -188,7 +188,7 @@ def semantic_state_to_context(state: dict, task_keywords: list[str]) -> str:
         lines = ["Relevant content on screen:"]
         for e in kw_content[:10]:
             val_str = f" = \"{e['value']}\"" if e.get("value") else ""
-            lines.append(f"  {e['role']:12} \"{e['name']}\"{val_str} → ({e['x']}, {e['y']})")
+            lines.append(f"  {e['role']:12} \"{e['name']}\"{val_str} → pyautogui.click({e['x']}, {e['y']})")
         parts.append("\n".join(lines))
 
     if state["values"]:
@@ -877,9 +877,15 @@ def action_to_pyautogui(raw: str) -> str | None:
     if "start_box=" in raw:
         m = _re.search(r"start_box=.?\(?(\d+)[,\s]+(\d+)", raw)
         if m:
-            # UI-TARS normalizes [0-1000] → convert to absolute pixels
-            x = round(int(m.group(1)) / 1000 * VL_SCREEN_W)
-            y = round(int(m.group(2)) / 1000 * VL_SCREEN_H)
+            rx, ry = int(m.group(1)), int(m.group(2))
+            # Distinguish: a11y-sourced coords are absolute (can be >1000);
+            # UI-TARS visual coords are normalized [0-1000].
+            # Heuristic: if either value > 1000, treat as absolute pixels directly.
+            if rx > 1000 or ry > 1000:
+                x, y = rx, ry
+            else:
+                x = round(rx / 1000 * VL_SCREEN_W)
+                y = round(ry / 1000 * VL_SCREEN_H)
             if raw.lower().startswith("rightclick") or raw.lower().startswith("right_click"):
                 return f"pyautogui.rightClick({x}, {y})"
             if raw.lower().startswith("doubleclick") or raw.lower().startswith("double_click"):
@@ -1084,7 +1090,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 untried_signal = (
                     "Elements you have NOT yet tried:\n"
                     + "\n".join(
-                        f"  - {e['role']} \"{e['name']}\" → ({e['x']}, {e['y']})"
+                        f"  - {e['role']} \"{e['name']}\" → pyautogui.click({e['x']}, {e['y']})"
                         for e in untried[:5]
                     )
                 )
