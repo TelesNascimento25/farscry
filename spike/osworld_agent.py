@@ -800,28 +800,29 @@ def vl_call(screenshot_path: str, task: str, history: list,
             temperature: float = 0.0,
             no_image: bool = False) -> str:
     # UI-TARS format: image FIRST, then text; model completes after "Thought:"
+    # history contains pairs [user_content, action_str] in alternating fashion
     parts = [f"Task: {task}"]
     if sf_feedback:
         parts.append(sf_feedback)
     if a11y_context:
         parts.append(a11y_context)
 
-    messages = []
-    for h in history[-4:]:
-        messages.append(h)
-
     text_content = "\n".join(parts)
+
+    # Build messages: no history (UI-TARS stateless per step via a11y context)
     if no_image or not screenshot_path or not os.path.exists(screenshot_path):
         # text-only: inject "Action:" trigger so model outputs structured action
-        messages.append({"role": "user", "content": text_content + "\nAction:"})
+        messages = [{"role": "user", "content": text_content + "\nAction:"}]
     else:
-        # UI-TARS: image BEFORE text, then "Thought:" trigger
-        messages.append({"role": "user", "content": [
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encode(screenshot_path)}"}},
-            {"type": "text", "text": text_content},
-        ]})
-        # Prefill "Thought:" to get structured Thought+Action output
-        messages.append({"role": "assistant", "content": "Thought:"})
+        # UI-TARS: image BEFORE text, then "Thought:" prefill
+        messages = [
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encode(screenshot_path)}"}},
+                {"type": "text", "text": text_content},
+            ]},
+            # Prefill assistant with "Thought:" — model continues with reasoning + Action:
+            {"role": "assistant", "content": "Thought:"},
+        ]
 
     r = requests.post(f"{VL_SERVER}/v1/chat/completions",
                       json={"model": VL_MODEL, "messages": messages,
