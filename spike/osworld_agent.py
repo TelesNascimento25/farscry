@@ -886,9 +886,10 @@ def action_to_pyautogui(raw: str, no_image: bool = False) -> str | None:
             else:
                 x = round(rx / 1000 * VL_SCREEN_W)
                 y = round(ry / 1000 * VL_SCREEN_H)
-            if raw.lower().startswith("rightclick") or raw.lower().startswith("right_click"):
+            raw_l = raw.lower()
+            if raw_l.startswith("rightclick") or raw_l.startswith("right_click") or raw_l.startswith("right click"):
                 return f"pyautogui.rightClick({x}, {y})"
-            if raw.lower().startswith("doubleclick") or raw.lower().startswith("double_click"):
+            if raw_l.startswith("doubleclick") or raw_l.startswith("double_click") or raw_l.startswith("double click"):
                 return f"pyautogui.doubleClick({x}, {y})"
             return f"pyautogui.click({x}, {y})"
         return None
