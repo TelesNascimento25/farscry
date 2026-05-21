@@ -260,20 +260,6 @@ Accessible UI elements are listed with exact coordinates. Use them for clicks.
 If you receive a [SILENT_FAILURE] warning, try a completely different action."""
 
 
-def _extract_target_value(task_instr: str) -> str:
-    """Extract the target value from rename/create/type tasks."""
-    # Patterns: 'to "value"', 'to value', 'named "value"', 'called "value"'
-    for pat in [
-        r'(?:rename|change|to)\s+["\']?([a-zA-Z0-9_\-\.]+)["\']?',
-        r'"([a-zA-Z0-9_\-\.]+)"',
-        r"'([a-zA-Z0-9_\-\.]+)'",
-    ]:
-        m = _re.search(pat, task_instr, _re.IGNORECASE)
-        if m and len(m.group(1)) > 3:
-            return m.group(1)
-    return ""
-
-
 def detect_dialog_next_action(focused_els: list[dict], tried_names: set[str], task_instr: str = "") -> str:
     """
     Detects common dialog interaction patterns from AT-SPI state.
@@ -310,26 +296,22 @@ def detect_dialog_next_action(focused_els: list[dict], tried_names: set[str], ta
             f"Now click the confirm button: \"{btn['name']}\" → pyautogui.click({btn['x']}, {btn['y']})"
         )
 
-    SHELL_EXCL = {"activities", "applications", "overview", "search"}
+    _EXCL = {"activities", "applications", "overview", "search"}
     text_inputs = [e for e in focused_els
-                   if e["role"] == "entry"
+                   if e.get("role") in ("entry", "text", "textfield")
                    and e.get("enabled", True)
-                   and e["name"].lower() not in SHELL_EXCL
+                   and e.get("name", "").lower() not in _EXCL
                    and e.get("y", 0) > 30]
     if text_inputs:
         inp = text_inputs[0]
-        target = _extract_target_value(task_instr) if task_instr else ""
-        typewrite_val = target if target else "<NEW_VALUE>"
         hint = (
-            f"Text input field \"{inp['name']}\" is open.\n"
-            f"Select all and type the new value:\n"
-            f"  pyautogui.hotkey('ctrl', 'a')\n"
-            f"  pyautogui.typewrite('{typewrite_val}', interval=0.05)\n"
-            f"  pyautogui.press('return')"
+            f"ACTIVE TEXT FIELD DETECTED: "
+            f"'{inp['name']}' at ({inp['x']}, {inp['y']}) is ready for input. "
+            f"Type the required text using pyautogui.typewrite()."
         )
         if confirm_buttons:
             btn = confirm_buttons[0]
-            hint += f"\nor click confirm: pyautogui.click({btn['x']}, {btn['y']})"
+            hint += f" Then confirm: pyautogui.click({btn['x']}, {btn['y']})"
         return hint
 
     return ""
@@ -1164,30 +1146,25 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             if precond:
                 print(f"  [s{step:02d}] precond: {precond[:70]}")
 
-            # Proactive text-input detection: when a rename/input dialog is visible
-            # Only "entry" role — excludes "text" (labels) and "textbox" (too broad)
-            # Also exclude GNOME shell elements by name/position
-            SHELL_NAMES = {"activities", "applications", "overview"}
-            text_input_els = [
+            # Active text field detection — tell the model, let it decide what to type
+            _SHELL_EXCL = {"activities", "applications", "overview"}
+            entry_fields = [
                 e for e in elements
-                if e["role"] == "entry"
+                if e.get("role") in ("entry", "text", "textfield")
                 and e.get("enabled", True)
-                and e["name"].lower() not in SHELL_NAMES
-                and e.get("y", 0) > 30  # exclude top bar elements (y < 30px)
+                and e.get("name", "").lower() not in _SHELL_EXCL
+                and e.get("y", 0) > 30
             ]
             text_input_hint = ""
-            if text_input_els:
-                target_val = _extract_target_value(task_instr)
-                typewrite_str = target_val if target_val else "<NEW_VALUE>"
-                inp = text_input_els[0]
+            if entry_fields:
+                field = entry_fields[0]
                 text_input_hint = (
-                    f"⌨ TEXT INPUT OPEN: \"{inp['name']}\" at pyautogui.click({inp['x']}, {inp['y']})\n"
-                    f"To set the value — run this sequence:\n"
-                    f"  pyautogui.hotkey('ctrl', 'a')\n"
-                    f"  pyautogui.typewrite('{typewrite_str}', interval=0.05)\n"
-                    f"  pyautogui.press('return')"
+                    f"ACTIVE TEXT FIELD DETECTED: "
+                    f"'{field['name']}' at ({field['x']}, {field['y']}) "
+                    f"is ready for input. "
+                    f"Type the required text using pyautogui.typewrite()."
                 )
-                print(f"  [s{step:02d}] TEXT_INPUT: '{inp['name']}' → typewrite('{typewrite_str}')")
+                print(f"  [s{step:02d}] ENTRY_FIELD: '{field['name']}' at ({field['x']},{field['y']})")
 
             # Direct scan: find task-keyword elements in current AT-SPI tree
             # This catches cases where APPEARED missed them (timing/AT-SPI latency)
