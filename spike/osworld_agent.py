@@ -259,7 +259,21 @@ Accessible UI elements are listed with exact coordinates. Use them for clicks.
 If you receive a [SILENT_FAILURE] warning, try a completely different action."""
 
 
-def detect_dialog_next_action(focused_els: list[dict], tried_names: set[str]) -> str:
+def _extract_target_value(task_instr: str) -> str:
+    """Extract the target value from rename/create/type tasks."""
+    # Patterns: 'to "value"', 'to value', 'named "value"', 'called "value"'
+    for pat in [
+        r'(?:rename|change|to)\s+["\']?([a-zA-Z0-9_\-\.]+)["\']?',
+        r'"([a-zA-Z0-9_\-\.]+)"',
+        r"'([a-zA-Z0-9_\-\.]+)'",
+    ]:
+        m = _re.search(pat, task_instr, _re.IGNORECASE)
+        if m and len(m.group(1)) > 3:
+            return m.group(1)
+    return ""
+
+
+def detect_dialog_next_action(focused_els: list[dict], tried_names: set[str], task_instr: str = "") -> str:
     """
     Detects common dialog interaction patterns from AT-SPI state.
     Universal: file chooser, save dialog, open dialog, color picker, etc.
@@ -298,12 +312,21 @@ def detect_dialog_next_action(focused_els: list[dict], tried_names: set[str]) ->
     text_inputs = [e for e in focused_els
                    if e["role"] in ("entry", "textbox", "text")
                    and e.get("enabled", True)]
-    if text_inputs and confirm_buttons:
-        btn = confirm_buttons[0]
-        return (
-            f"There is a text input field. Type the required value, "
-            f"then click \"{btn['name']}\" → pyautogui.click({btn['x']}, {btn['y']})"
+    if text_inputs:
+        inp = text_inputs[0]
+        target = _extract_target_value(task_instr) if task_instr else ""
+        typewrite_val = target if target else "<NEW_VALUE>"
+        hint = (
+            f"Text input field \"{inp['name']}\" is open.\n"
+            f"Select all and type the new value:\n"
+            f"  pyautogui.hotkey('ctrl', 'a')\n"
+            f"  pyautogui.typewrite('{typewrite_val}', interval=0.05)\n"
+            f"  pyautogui.press('return')"
         )
+        if confirm_buttons:
+            btn = confirm_buttons[0]
+            hint += f"\nor click confirm: pyautogui.click({btn['x']}, {btn['y']})"
+        return hint
 
     return ""
 
@@ -1114,6 +1137,25 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             if precond:
                 print(f"  [s{step:02d}] precond: {precond[:70]}")
 
+            # Proactive text-input detection: when a rename/input dialog is visible
+            text_input_els = [
+                e for e in elements
+                if e["role"] in ("entry", "textbox", "text") and e.get("enabled", True)
+            ]
+            text_input_hint = ""
+            if text_input_els:
+                target_val = _extract_target_value(task_instr)
+                typewrite_str = target_val if target_val else "<NEW_VALUE>"
+                inp = text_input_els[0]
+                text_input_hint = (
+                    f"⌨ TEXT INPUT OPEN: \"{inp['name']}\" at pyautogui.click({inp['x']}, {inp['y']})\n"
+                    f"To set the value — run this sequence:\n"
+                    f"  pyautogui.hotkey('ctrl', 'a')\n"
+                    f"  pyautogui.typewrite('{typewrite_str}', interval=0.05)\n"
+                    f"  pyautogui.press('return')"
+                )
+                print(f"  [s{step:02d}] TEXT_INPUT: '{inp['name']}' → typewrite('{typewrite_str}')")
+
             # Direct scan: find task-keyword elements in current AT-SPI tree
             # This catches cases where APPEARED missed them (timing/AT-SPI latency)
             direct_hits = [
@@ -1123,7 +1165,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 and e["name"].strip()
             ]
             direct_hint = ""
-            if direct_hits and not appeared_signal:
+            if direct_hits and not appeared_signal and not text_input_hint:
                 direct_hint = (
                     "Relevant elements found — use one of these:\n"
                     + "\n".join(
@@ -1133,7 +1175,10 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 )
 
             ctx_parts = []
-            if appeared_signal:
+            # text_input_hint has highest priority — overrides everything
+            if text_input_hint:
+                ctx_parts.append(text_input_hint)
+            elif appeared_signal:
                 ctx_parts.append(appeared_signal)
             elif direct_hint:
                 ctx_parts.append(direct_hint)
@@ -1141,9 +1186,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 ctx_parts.append(untried_signal)
             if precond:
                 ctx_parts.append(precond)
-            if submenu_context and not appeared_signal and not direct_hint:
+            if submenu_context and not appeared_signal and not direct_hint and not text_input_hint:
                 ctx_parts.append(submenu_context)
-            if live_ctx:
+            if live_ctx and not text_input_hint:
                 ctx_parts.append(live_ctx)
             a11y_context = "\n\n".join(ctx_parts)
 
@@ -1152,6 +1197,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             matched   = sum(1 for k in task_kw if any(
                 k in e["name"].lower() for e in elements + sem_state["content"]
             ))
+            # Text input is always a clear signal — force no_image mode
+            if text_input_hint:
+                matched = max(matched, 1)
             print(f"  [ctx] inter={len(elements)}  content={n_content}  vals={n_vals}  matched={matched}")
 
         if augmented:
@@ -1251,7 +1299,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                             untried_elements=focused_untried[:4],
                         )
                         src = "focused container" if focused_els else "fallback all"
-                        dialog_hint = detect_dialog_next_action(focused_els, tried_names)
+                        dialog_hint = detect_dialog_next_action(focused_els, tried_names, task_instr)
                         if dialog_hint:
                             print(f"  [s{step:02d}] DIALOG PATTERN: {dialog_hint[:80]}")
                         print(f"  [s{step:02d}] annotated: {len(focused_untried)} untried from {src}")
