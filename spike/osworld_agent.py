@@ -1066,10 +1066,20 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             if truly_new and len(truly_new) >= 2:
                 new_labels = [n for n in truly_new if len(n) > 2][:6]
                 if new_labels:
+                    # Build appeared signal WITH coordinates so model can click directly
+                    appeared_lines = []
+                    for n in new_labels:
+                        # Find matching element in current elements list
+                        el = next((e for e in elements if e["name"].lower() == n.lower()), None)
+                        if el:
+                            appeared_lines.append(
+                                f"  - \"{el['name']}\" → pyautogui.click({el['x']}, {el['y']})"
+                            )
+                        else:
+                            appeared_lines.append(f"  - \"{n}\"")
                     appeared_signal = (
-                        "⚡ NEW: These elements just appeared for the first time:\n"
-                        + "\n".join(f"  - {n}" for n in new_labels)
-                        + "\nNew context. Interact with these."
+                        "⚡ NEW elements appeared — click one of these:\n"
+                        + "\n".join(appeared_lines)
                     )
                     print(f"  [s{step:02d}] APPEARED: {new_labels[:3]}")
 
