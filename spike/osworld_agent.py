@@ -30,6 +30,10 @@ from pathlib import Path
 import requests
 
 VL_SERVER = os.environ.get("VL_SERVER", "http://localhost:8083")
+VL_MODEL  = os.environ.get("VL_MODEL", "/home/teles/llm-setup/models/uitars_hf")
+# OSWorld default resolution; UI-TARS outputs coords normalized [0-1000]
+VL_SCREEN_W = int(os.environ.get("VL_SCREEN_W", "1920"))
+VL_SCREEN_H = int(os.environ.get("VL_SCREEN_H", "1080"))
 FARSCRY_BIN = os.environ.get("FARSCRY_BIN", "farscry")
 SESSION_DIR = Path(os.environ.get("FARSCRY_SESSION_DIR", os.path.expanduser("~/.farscry/osworld")))
 
@@ -726,7 +730,7 @@ def vl_checkpoint(screenshot_path: str, task: str, temperature: float = 0.0) -> 
     ]
     try:
         r = requests.post(f"{VL_SERVER}/v1/chat/completions",
-                          json={"model": "qwen2.5-vl", "messages": messages,
+                          json={"model": VL_MODEL, "messages": messages,
                                 "max_tokens": 5, "temperature": temperature},
                           timeout=60)
         r.raise_for_status()
@@ -788,7 +792,7 @@ def vl_call_text_only(task: str, a11y_context: str, stuck_hint: str = "") -> str
     ]
     try:
         r = requests.post(f"{VL_SERVER}/v1/chat/completions",
-                          json={"model": "qwen2.5-vl", "messages": messages,
+                          json={"model": VL_MODEL, "messages": messages,
                                 "max_tokens": 128, "temperature": 0.3},
                           timeout=180)
         r.raise_for_status()
@@ -822,7 +826,7 @@ def vl_call(screenshot_path: str, task: str, history: list,
         ]})
 
     r = requests.post(f"{VL_SERVER}/v1/chat/completions",
-                      json={"model": "qwen2.5-vl", "messages": messages,
+                      json={"model": VL_MODEL, "messages": messages,
                             "max_tokens": 128, "temperature": temperature},
                       timeout=180)
     r.raise_for_status()
@@ -866,7 +870,10 @@ def action_to_pyautogui(raw: str) -> str | None:
     if "start_box=" in raw:
         m = _re.search(r"start_box=.?\(?(\d+)[,\s]+(\d+)", raw)
         if m:
-            return f"pyautogui.click({m.group(1)}, {m.group(2)})"
+            # UI-TARS normalizes [0-1000] → convert to absolute pixels
+            x = round(int(m.group(1)) / 1000 * VL_SCREEN_W)
+            y = round(int(m.group(2)) / 1000 * VL_SCREEN_H)
+            return f"pyautogui.click({x}, {y})"
         return None
     if raw.startswith("click(") and "pyautogui." not in raw:
         m = _re.search(r"click\((\d+),\s*(\d+)\)", raw)
