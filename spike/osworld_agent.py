@@ -779,7 +779,7 @@ def vl_checkpoint(screenshot_path: str, task: str, temperature: float = 0.0) -> 
         r = requests.post(f"{VL_SERVER}/v1/chat/completions",
                           json={"model": VL_MODEL, "messages": messages,
                                 "max_tokens": 5, "temperature": temperature},
-                          timeout=60)
+                          timeout=(10, 60))
         r.raise_for_status()
         answer = r.json()["choices"][0]["message"]["content"].strip().upper()
         return answer.startswith("YES")
@@ -835,7 +835,7 @@ def vl_call_text_only(task: str, a11y_context: str, stuck_hint: str = "") -> str
         r = requests.post(f"{VL_SERVER}/v1/chat/completions",
                           json={"model": VL_MODEL, "messages": messages,
                                 "max_tokens": 128, "temperature": 0.3},
-                          timeout=60)
+                          timeout=(10, 60))
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"].strip()
     except Exception:
@@ -877,7 +877,7 @@ def vl_call(screenshot_path: str, task: str, history: list,
     r = requests.post(f"{VL_SERVER}/v1/chat/completions",
                       json={"model": VL_MODEL, "messages": messages,
                             "max_tokens": 256, "temperature": temperature},
-                      timeout=60)
+                      timeout=(10, 60))
     r.raise_for_status()
     raw = r.json()["choices"][0]["message"]["content"].strip()
     # Prefilled with "Thought:" (visual) or "Action:" (no_image)
