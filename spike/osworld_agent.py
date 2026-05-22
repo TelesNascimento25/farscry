@@ -32,6 +32,8 @@ import requests
 
 VL_SERVER = os.environ.get("VL_SERVER", "http://localhost:8083")
 VL_MODEL  = os.environ.get("VL_MODEL", "/home/teles/llm-setup/models/uitars_hf")
+# VL_MODEL_TYPE: "uitars" (default) or "qwen25vl"
+VL_MODEL_TYPE = os.environ.get("VL_MODEL_TYPE", "uitars")
 # OSWorld default resolution; UI-TARS outputs coords normalized [0-1000]
 VL_SCREEN_W = int(os.environ.get("VL_SCREEN_W", "1920"))
 VL_SCREEN_H = int(os.environ.get("VL_SCREEN_H", "1080"))
@@ -828,8 +830,6 @@ def vl_call(screenshot_path: str, task: str, history: list,
             a11y_context: str = "", sf_feedback: str = "",
             temperature: float = 0.0,
             no_image: bool = False) -> str:
-    # UI-TARS format: image FIRST, then text; model completes after "Thought:"
-    # history contains pairs [user_content, action_str] in alternating fashion
     parts = [f"Task: {task}"]
     if sf_feedback:
         parts.append(sf_feedback)
@@ -838,12 +838,21 @@ def vl_call(screenshot_path: str, task: str, history: list,
 
     text_content = "\n".join(parts)
 
-    # Build messages: no history (UI-TARS stateless per step via a11y context)
     if no_image or not screenshot_path or not os.path.exists(screenshot_path):
-        # text-only: use assistant prefill to force model to copy a coord from a11y_context
+        # Text-only: prefill "Action:" so model copies coords from a11y_context
         messages = [
             {"role": "user", "content": text_content},
             {"role": "assistant", "content": "Action:"},
+        ]
+    elif VL_MODEL_TYPE == "qwen25vl":
+        # Qwen2.5-VL: system prompt + image in user message
+        # Model outputs pyautogui statements directly (no start_box format)
+        messages = [
+            {"role": "system", "content": SYSTEM_AUG if a11y_context else SYSTEM_BASE},
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encode(screenshot_path)}"}},
+                {"type": "text", "text": text_content},
+            ]},
         ]
     else:
         # UI-TARS: image BEFORE text, then "Thought:" prefill
@@ -852,7 +861,6 @@ def vl_call(screenshot_path: str, task: str, history: list,
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encode(screenshot_path)}"}},
                 {"type": "text", "text": text_content},
             ]},
-            # Prefill assistant with "Thought:" — model continues with reasoning + Action:
             {"role": "assistant", "content": "Thought:"},
         ]
 
@@ -878,7 +886,11 @@ def vl_call(screenshot_path: str, task: str, history: list,
     raw = _call(messages)
     result = _extract(raw)
 
-    # If visual mode returned prose without an action, retry with direct prompt
+    # Qwen2.5-VL outputs pyautogui directly — no retry needed if it's there
+    if VL_MODEL_TYPE == "qwen25vl" and not no_image:
+        return result
+
+    # UI-TARS: if visual mode returned prose without an action, retry
     if not no_image and "start_box=" not in result and "pyautogui." not in result:
         retry_msgs = [
             {"role": "user", "content": [
