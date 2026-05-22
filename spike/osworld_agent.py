@@ -1160,6 +1160,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
     shortcut_queue: list[list[str]] = []      # pending hotkeys to fire in sequence (Level 3)
     shortcut_fired_labels: set[str] = set()   # all action labels already triggered this task
     shortcut_cooldown: int = 0                # steps to wait before next shortcut trigger
+    force_visual_steps: int = 0              # steps to force visual mode after shortcut
 
     obs = env.reset(task_config=task_config)
 
@@ -1446,12 +1447,18 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         print(f"  [s{step:02d}] a11y={n_elements}el  csf={consecutive_sf}  esc={total_escapes}  temp={temp:.1f}")
         # no_image=True when >=1 matched keyword: model copies absolute coords from a11y_context.
         # no_image=False (visual) only when matched=0: model uses screenshot freely.
-        use_no_image = a11y_only and matched >= 1
-        if use_no_image:
-            print(f"  [s{step:02d}] NO-IMAGE mode (matched={matched} ≥ 1)")
-        # When matched=0: visual mode, no a11y_context (sidebar elements distract model).
-        # When matched>=1: no_image mode with a11y_context as the only signal.
-        effective_ctx = a11y_context if use_no_image else ""
+        if force_visual_steps > 0:
+            force_visual_steps -= 1
+            use_no_image = False
+            effective_ctx = ""
+            print(f"  [s{step:02d}] VISUAL-FORCED (post-shortcut, {force_visual_steps} remaining)")
+        else:
+            use_no_image = a11y_only and matched >= 1
+            if use_no_image:
+                print(f"  [s{step:02d}] NO-IMAGE mode (matched={matched} ≥ 1)")
+            # When matched=0: visual mode, no a11y_context (sidebar elements distract model).
+            # When matched>=1: no_image mode with a11y_context as the only signal.
+            effective_ctx = a11y_context if use_no_image else ""
 
         # Level 3: keyboard shortcut auto-trigger
         # Fires when model is stuck (micro_loop_count >= 1) and app+task match a shortcut.
@@ -1510,10 +1517,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 auto_clean = f"pyautogui.hotkey({keys_str})"
                 print(f"  [s{step:02d}] SHORTCUT-L3: {auto_clean}")
             if not shortcut_queue:
-                # Last action in sequence — force visual mode next step so model sees result
-                shortcut_cooldown = max(shortcut_cooldown, 2)
-                matched = 0
-                effective_ctx = ""
+                # Last action in sequence — force visual mode for next 3 steps
+                force_visual_steps = 3
+                print(f"  [s{step:02d}] SHORTCUT-SEQ-DONE: visual mode forced x3")
 
         if auto_clean:
             clean = auto_clean
