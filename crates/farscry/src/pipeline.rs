@@ -55,7 +55,7 @@ pub fn get_or_build_pipeline() -> Result<Arc<Pipeline>> {
     })?;
 
     let pipeline = Arc::new(Pipeline::new(
-        Arc::new(IdentityPreprocessor),
+        Arc::new(crate::preprocess::EnhancingPreprocessor::default()),
         Arc::new(ocr),
         Arc::new(farscry_classifier::Classifier),
         Arc::new(farscry_classifier::Classifier),

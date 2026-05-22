@@ -4,6 +4,7 @@ mod config;
 #[cfg(target_os = "macos")]
 mod iosurface_phash;
 mod pipeline;
+mod preprocess;
 mod util;
 
 use anyhow::Result;
