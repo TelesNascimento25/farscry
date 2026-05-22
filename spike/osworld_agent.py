@@ -1363,6 +1363,10 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         if not action_str:
             break
 
+        # After press(return) on entry_field: wait for async state change then check done
+        if "press('return')" in action_str and entry_fields:
+            time.sleep(1.5)
+
         # Timeout guard: env.step can block indefinitely if VM freezes
         def _timeout_handler(signum, frame):
             raise TimeoutError("env.step timed out after 45s")
