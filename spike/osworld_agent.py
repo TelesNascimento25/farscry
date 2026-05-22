@@ -1277,12 +1277,11 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             a11y_context = "\n\n".join(ctx_parts)
 
             if focused_els:
-                focused_str = ", ".join(
-                    f"{e['role']} '{e['name']}'"
-                    for e in focused_els[:2]
-                )
+                f0 = focused_els[0]
+                clean_name = f0['name'].encode('ascii', 'ignore').decode().strip()
                 a11y_context = (
-                    f"FOCUSED RIGHT NOW: {focused_str}\n"
+                    f"FOCUSED RIGHT NOW: {f0['role']} '{clean_name}'\n"
+                    f"  → pyautogui.click({f0['x']}, {f0['y']})\n"
                     f"(This element is active — interact with it)\n\n"
                 ) + a11y_context
 
