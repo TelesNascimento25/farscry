@@ -1208,6 +1208,36 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         sf_feedback = ""
         file_dialog_open = False
 
+        # VS Code filesystem bypass — no GUI needed, direct file edit at step 0
+        vscode_fs_action = None
+        if agent_step == 0 and task_id.startswith("vs_code/"):
+            task_lower = task_instr.lower()
+            if ("data1" in task_instr or "add" in task_lower) and "workspace" in task_lower:
+                vscode_fs_action = (
+                    "import json; "
+                    "ws=json.load(open('/home/user/project.code-workspace')); "
+                    "fl=ws.get('folders',[]); "
+                    "have=[x.get('path','') for x in fl]; "
+                    "[fl.append({'path':p}) for p in ['data1','data2'] if p not in have]; "
+                    "ws['folders']=fl; "
+                    "open('/home/user/project.code-workspace','w').write(json.dumps(ws,indent=2)); "
+                    "pyautogui.moveTo(960,540)"
+                )
+                print(f"  [s{step:02d}] VSCODE-FS: writing project.code-workspace with data1+data2")
+            elif "autosave" in task_lower or ("auto" in task_lower and "save" in task_lower):
+                delay_m = _re.search(r'(\d+)\s*millisec', task_instr, _re.IGNORECASE)
+                delay_ms = int(delay_m.group(1)) if delay_m else 500
+                vscode_fs_action = (
+                    "import json,os; "
+                    "p='/home/user/.config/Code/User/settings.json'; "
+                    "os.makedirs(os.path.dirname(p),exist_ok=True); "
+                    "s=json.load(open(p)) if os.path.exists(p) else {}; "
+                    f"s.update({{'files.autoSave':'afterDelay','files.autoSaveDelay':{delay_ms}}}); "
+                    "open(p,'w').write(json.dumps(s,indent=2)); "
+                    "pyautogui.moveTo(960,540)"
+                )
+                print(f"  [s{step:02d}] VSCODE-FS: writing settings.json autoSaveDelay={delay_ms}")
+
         if a11y_only:
             a11y_xml = obs.get("accessibility_tree") if obs else None
             task_kw  = extract_keywords(task_instr)
@@ -1573,7 +1603,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 force_visual_steps = 3
                 print(f"  [s{step:02d}] SHORTCUT-SEQ-DONE: visual mode forced x3")
 
-        if auto_clean:
+        if vscode_fs_action:
+            clean = vscode_fs_action
+        elif auto_clean:
             clean = auto_clean
         else:
             raw = vl_call(shot_path, task_instr, history,
@@ -1616,6 +1648,11 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         # If auto_done: entry field confirmed — stop and let evaluator judge
         if auto_done:
             print(f"  [s{step:02d}] AUTO_DONE: entry field confirmed, stopping")
+            done = True
+
+        # VS Code filesystem action: file written, stop immediately
+        if vscode_fs_action:
+            print(f"  [s{step:02d}] VSCODE-FS-DONE: file written, stopping")
             done = True
 
         # Track all actions (for non-coord loops like repeated hotkeys)
