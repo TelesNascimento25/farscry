@@ -1337,11 +1337,8 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 # typewrite just done → press return to confirm
                 auto_clean = "pyautogui.press('return')"
                 print(f"  [s{step:02d}] AUTO: typewrite done → press return")
-            elif ("hotkey" not in last_act or "ctrl" not in last_act or
-                  ("a" not in last_act and "c" not in last_act)):
-                # Entry field visible but no ctrl+a/c yet → select all first
-                auto_clean = "pyautogui.hotkey('ctrl', 'a')"
-                print(f"  [s{step:02d}] AUTO: entry field open → ctrl+a")
+            # Note: no auto ctrl+a — GNOME rename dialog auto-selects text on open
+            # Previous runs show typewrite directly works (no ctrl+a needed)
 
         if auto_clean:
             clean = auto_clean
