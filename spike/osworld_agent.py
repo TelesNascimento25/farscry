@@ -530,6 +530,70 @@ GIMP — common operations:
 }
 
 
+APP_SHORTCUTS: dict[str, list[tuple[str, list[list[str]]]]] = {
+    "vs_code": [
+        ("add folder",    [["ctrl", "shift", "p"]]),
+        ("workspace",     [["ctrl", "shift", "p"]]),
+        ("autosave",      [["ctrl", "shift", "p"]]),
+        ("auto save",     [["ctrl", "shift", "p"]]),
+        ("open file",     [["ctrl", "p"]]),
+        ("settings",      [["ctrl", "comma"]]),
+        ("terminal",      [["ctrl", "grave"]]),
+    ],
+    "libreoffice_writer": [
+        ("color",         [["ctrl", "a"], ["ctrl", "m"]]),
+        ("font",          [["ctrl", "a"]]),
+        ("select all",    [["ctrl", "a"]]),
+        ("replace",       [["ctrl", "h"]]),
+        ("find",          [["ctrl", "f"]]),
+        ("bold",          [["ctrl", "b"]]),
+        ("italic",        [["ctrl", "i"]]),
+        ("underline",     [["ctrl", "u"]]),
+        ("delete",        [["ctrl", "a"], ["delete"]]),
+        ("paragraph",     [["ctrl", "a"]]),
+    ],
+    "libreoffice_calc": [
+        ("formula",       []),
+        ("sort",          [["ctrl", "a"]]),
+        ("select all",    [["ctrl", "a"]]),
+    ],
+    "thunderbird": [
+        ("attach",        [["ctrl", "shift", "a"]]),
+        ("attachment",    [["ctrl", "shift", "a"]]),
+        ("compose",       [["ctrl", "n"]]),
+        ("new email",     [["ctrl", "n"]]),
+        ("reply",         [["ctrl", "r"]]),
+        ("forward",       [["ctrl", "l"]]),
+        ("mark star",     [["s"]]),
+        ("star",          [["s"]]),
+        ("folder",        []),
+    ],
+    "gimp": [
+        ("export",        [["ctrl", "shift", "e"]]),
+        ("select all",    [["ctrl", "a"]]),
+        ("open",          [["ctrl", "o"]]),
+        ("undo",          [["ctrl", "z"]]),
+    ],
+}
+
+
+def detect_current_app(elements: list[dict]) -> str:
+    names = " ".join(e["name"].lower() for e in elements)
+    if "visual studio code" in names or "vscode" in names or "open folder" in names or "welcome" in names:
+        return "vs_code"
+    if "writer" in names or ("libreoffice" in names and "calc" not in names and "impress" not in names):
+        return "libreoffice_writer"
+    if "calc" in names or "spreadsheet" in names:
+        return "libreoffice_calc"
+    if "impress" in names or "presentation" in names:
+        return "libreoffice_impress"
+    if "thunderbird" in names or "write:" in names or "inbox" in names:
+        return "thunderbird"
+    if "gimp" in names or "toolbox" in names:
+        return "gimp"
+    return ""
+
+
 def get_app_context(elements: list[dict]) -> str:
     names = " ".join(e["name"].lower() for e in elements)
     if "writer" in names or ("libreoffice" in names and "calc" not in names and "impress" not in names):
@@ -1093,6 +1157,8 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
     micro_loop_count = 0
     submenu_context: str = ""
     tried_names: set[str] = set()  # init here to avoid NameError in augmented mode
+    shortcut_queue: list[list[str]] = []   # pending hotkeys to fire in sequence (Level 3)
+    shortcut_fired_for: str = ""           # action key that triggered current shortcut sequence
 
     obs = env.reset(task_config=task_config)
 
@@ -1386,6 +1452,21 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         # When matched>=1: no_image mode with a11y_context as the only signal.
         effective_ctx = a11y_context if use_no_image else ""
 
+        # Level 3: keyboard shortcut auto-trigger
+        # Fires when model is stuck (micro_loop_count >= 1) and app+task match a shortcut.
+        # Each call fires one hotkey from the sequence; queue persists across steps.
+        if not shortcut_queue and micro_loop_count >= 1 and a11y_only:
+            current_app = detect_current_app(elements if a11y_only else [])
+            if current_app and current_app in APP_SHORTCUTS:
+                for action_label, hotkey_seq in APP_SHORTCUTS[current_app]:
+                    if action_label != shortcut_fired_for and hotkey_seq and any(
+                        kw in action_label for kw in task_kw
+                    ):
+                        shortcut_queue.extend(hotkey_seq)
+                        shortcut_fired_for = action_label
+                        print(f"  [s{step:02d}] SHORTCUT-TRIGGER: '{action_label}' → {hotkey_seq} (app={current_app})")
+                        break
+
         # Auto-actions: deterministic state machine for text field interactions
         # Bypasses model uncertainty for well-defined sequences
         last_act = action_str_history[-1] if action_str_history else ""
@@ -1411,6 +1492,12 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 else:
                     print(f"  [s{step:02d}] AUTO: press return (no match: '{typed[:20]}' not in '{field_value[:25]}')")
             # Note: no auto ctrl+a — GNOME rename dialog auto-selects text on open
+
+        if shortcut_queue:
+            keys = shortcut_queue.pop(0)
+            keys_str = ", ".join(f"'{k}'" for k in keys)
+            auto_clean = f"pyautogui.hotkey({keys_str})"
+            print(f"  [s{step:02d}] SHORTCUT-L3: {auto_clean}")
 
         if auto_clean:
             clean = auto_clean
