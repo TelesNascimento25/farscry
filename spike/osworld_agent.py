@@ -1359,17 +1359,18 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             file_dialog_hint = ""
             if file_dialog_open:
                 _paths = _re.findall(r'[~/][\w./~-]+', task_instr)
-                _paths = [p.replace("~/", "/home/user/") for p in _paths]
+                _paths = [p.replace("~/", "/home/user/").rstrip("./") for p in _paths]
                 if _paths:
                     file_dialog_hint = (
                         f"FILE DIALOG IS OPEN.\n"
-                        f"Type the path directly: pyautogui.typewrite('{_paths[0]}')\n"
+                        f"First press Ctrl+L to focus path bar: pyautogui.hotkey('ctrl', 'l')\n"
+                        f"Then type path: pyautogui.typewrite('{_paths[0]}')\n"
                         f"Then press return to confirm."
                     )
                 else:
                     file_dialog_hint = (
                         "FILE DIALOG IS OPEN.\n"
-                        "Type the required path using pyautogui.typewrite(), then press return."
+                        "Press Ctrl+L to focus path bar, then pyautogui.typewrite(path), then return."
                     )
 
             ctx_parts = []
