@@ -1465,6 +1465,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                     if action_label not in shortcut_fired_labels and hotkey_seq and all(
                         word in task_kw for word in action_label.split()
                     ):
+                        if focused_els:
+                            f0 = focused_els[0]
+                            shortcut_queue.append(["__click__", str(f0["x"]), str(f0["y"])])
                         shortcut_queue.extend(hotkey_seq)
                         shortcut_fired_labels.add(action_label)
                         shortcut_cooldown = 3
@@ -1499,11 +1502,15 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
 
         if shortcut_queue:
             keys = shortcut_queue.pop(0)
-            keys_str = ", ".join(f"'{k}'" for k in keys)
-            auto_clean = f"pyautogui.hotkey({keys_str})"
-            print(f"  [s{step:02d}] SHORTCUT-L3: {auto_clean}")
+            if keys[0] == "__click__":
+                auto_clean = f"pyautogui.click({keys[1]}, {keys[2]})"
+                print(f"  [s{step:02d}] SHORTCUT-FOCUS: {auto_clean}")
+            else:
+                keys_str = ", ".join(f"'{k}'" for k in keys)
+                auto_clean = f"pyautogui.hotkey({keys_str})"
+                print(f"  [s{step:02d}] SHORTCUT-L3: {auto_clean}")
             if not shortcut_queue:
-                # Last hotkey in sequence — force visual mode next step so model sees result
+                # Last action in sequence — force visual mode next step so model sees result
                 shortcut_cooldown = max(shortcut_cooldown, 2)
                 matched = 0
                 effective_ctx = ""
