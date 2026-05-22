@@ -147,30 +147,39 @@ Descricao curta (kebab-case, max 40 chars):
 [O que aprendemos de relevante]
 ```
 
-### Comando para salvar log no fim do run (NullPointer -> Mac via scp)
+### Como rodar (UNICA forma correta)
 
 ```bash
-# Rodar no Mac IMEDIATAMENTE apos o run terminar — ANTES de comecar o proximo run
-MODELO="qwen25vl-gptq-int4"
-DEST="/Users/teles/Documents/Obsidian Vault (iCloud)/FARSCRY/logs/raw/$MODELO"
-mkdir -p "$DEST"
-scp kali:/tmp/run.log "$DEST/$(date +%Y%m%d_%H%M%S)_osworld-n10.log"
+# No NullPointer — NUNCA rodar python3 direto com > /tmp/run.log
+cd /home/teles/farscry
+spike/run_osworld.sh --mode run_b_smart --tasks /home/teles/osworld_tasks_10.json --n 10 --max-steps 15
 ```
 
-### REGRA CRITICA: salvar ANTES de apagar
+O script `spike/run_osworld.sh`:
+- Gera log em `/tmp/osworld_YYYYMMDD_HHMMSS.log` — arquivo unico, impossivel sobrescrever
+- Ao terminar, imprime o caminho exato e o comando scp para copiar ao Mac
+- Nunca usa `/tmp/run.log`
 
-O comando `> /tmp/run.log` ou `>> /tmp/run.log` que precede cada run **DESTROI o log anterior**.
-Sequencia obrigatoria:
+### Copiar log ao Mac (apos o run terminar)
 
+```bash
+# O script imprime este comando pronto — so copiar e colar
+scp kali:/tmp/osworld_YYYYMMDD_HHMMSS.log \
+  "/Users/teles/Documents/Obsidian Vault (iCloud)/FARSCRY/logs/raw/qwen25vl-gptq-int4/YYYYMMDD_HHMMSS_descricao.log"
 ```
-1. Run termina
-2. SCP -> Mac (SALVAR AGORA)
-3. Criar .md de spike
-4. Somente entao: > /tmp/run.log (limpar para proximo run)
+
+### PROIBIDO
+
+```bash
+# NUNCA fazer isso — destroi o log anterior
+python3 -u osworld_agent.py ... > /tmp/run.log
+
+# NUNCA fazer isso sem salvar antes
+> /tmp/run.log
 ```
 
-NUNCA inverter a ordem. Violar isso causa perda permanente de dados de experimento.
-O que aconteceu nos runs 38a, 38b, 38c desta sessao (Mai 22): logs perdidos por nao seguir esta ordem.
+O que aconteceu nos runs 38a, 38b, 38c (Mai 22): logs perdidos porque
+`> /tmp/run.log` foi usado antes de salvar. Tres runs de experimento perdidos permanentemente.
 
 ### Espaco em disco
 
