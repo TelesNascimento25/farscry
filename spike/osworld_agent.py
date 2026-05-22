@@ -1079,6 +1079,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
     agent_step = 0
     sf_feedback_count = 0
     action_coord_history: list[tuple[int, int]] = []
+    action_str_history: list[str] = []   # tracks all actions for non-coord loops
     micro_loop_count = 0
     submenu_context: str = ""
     tried_names: set[str] = set()  # init here to avoid NameError in augmented mode
@@ -1338,6 +1339,14 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         finally:
             signal.alarm(0)
         agent_step += 1
+
+        # Track all actions (for non-coord loops like repeated hotkeys)
+        action_str_history.append(action_str)
+        if len(action_str_history) >= 5:
+            recent_strs = action_str_history[-5:]
+            if len(set(recent_strs)) == 1:  # same action 5x in a row
+                micro_loop_count += 1
+                print(f"  [s{step:02d}] ACTION-LOOP: '{action_str[:40]}' repeated 5x")
 
         coords = _parse_click_coords(action_str)
         if coords:
