@@ -1214,7 +1214,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                     f"ACTIVE TEXT FIELD DETECTED: "
                     f"'{field['name']}' at ({field['x']}, {field['y']}) "
                     f"is ready for input. "
-                    f"Type the required text using pyautogui.typewrite()."
+                    f"First select all with pyautogui.hotkey('ctrl','a'), "
+                    f"then type using pyautogui.typewrite(), "
+                    f"then confirm with pyautogui.press('return')."
                 )
                 print(f"  [s{step:02d}] ENTRY_FIELD: '{field['name']}' at ({field['x']},{field['y']})")
 
