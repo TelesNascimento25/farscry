@@ -1213,23 +1213,21 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 # Sequential hint based on last action
                 last_act = action_str_history[-1] if action_str_history else ""
                 if "hotkey" in last_act and "ctrl" in last_act and "a" in last_act:
-                    # ctrl+a was just done → now typewrite
+                    # ctrl+a done → now typewrite
                     text_input_hint = (
-                        f"TEXT FIELD '{field['name']}' is selected. "
-                        f"Now TYPE the new value: pyautogui.typewrite('NEW_VALUE', interval=0.05)"
+                        f"FIELD '{field['name']}' selected. "
+                        f"Now type the required value using pyautogui.typewrite()."
                     )
                 elif "typewrite" in last_act:
-                    # typewrite was just done → now press return
+                    # typewrite done → now press return
                     text_input_hint = (
-                        f"Text typed. Now CONFIRM with: pyautogui.press('return')"
+                        f"Value typed. Now press Enter: pyautogui.press('return')"
                     )
                 else:
-                    # First time seeing field → select all first
+                    # First step → select all
                     text_input_hint = (
-                        f"ACTIVE TEXT FIELD '{field['name']}' at ({field['x']}, {field['y']}). "
-                        f"Step 1: pyautogui.hotkey('ctrl','a') to select all. "
-                        f"Step 2: pyautogui.typewrite('NEW_VALUE', interval=0.05). "
-                        f"Step 3: pyautogui.press('return')."
+                        f"TEXT FIELD '{field['name']}' at ({field['x']}, {field['y']}) is open. "
+                        f"Select all: pyautogui.hotkey('ctrl', 'a')"
                     )
                 print(f"  [s{step:02d}] ENTRY_FIELD: '{field['name']}' → {text_input_hint[:50]}")
 
