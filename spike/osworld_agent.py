@@ -1326,11 +1326,23 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         # When matched=0: visual mode, no a11y_context (sidebar elements distract model).
         # When matched>=1: no_image mode with a11y_context as the only signal.
         effective_ctx = a11y_context if use_no_image else ""
-        raw = vl_call(shot_path, task_instr, history,
-                      a11y_context=effective_ctx, sf_feedback=sf_feedback,
-                      temperature=temp,
-                      no_image=use_no_image)
-        clean = raw.strip().splitlines()[0].strip()
+
+        # Auto-action: if typewrite was just done and entry field exists → press return
+        # This bypasses model uncertainty about "what to do after typing"
+        last_act = action_str_history[-1] if action_str_history else ""
+        auto_clean = None
+        if "typewrite" in last_act and entry_fields:
+            auto_clean = "pyautogui.press('return')"
+            print(f"  [s{step:02d}] AUTO: typewrite done → press return")
+
+        if auto_clean:
+            clean = auto_clean
+        else:
+            raw = vl_call(shot_path, task_instr, history,
+                          a11y_context=effective_ctx, sf_feedback=sf_feedback,
+                          temperature=temp,
+                          no_image=use_no_image)
+            clean = raw.strip().splitlines()[0].strip()
         print(f"  [s{step:02d}] model → {clean[:80]}")
         history.append({"role": "assistant", "content": clean})
 
