@@ -1210,15 +1210,28 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             text_input_hint = ""
             if entry_fields:
                 field = entry_fields[0]
-                text_input_hint = (
-                    f"ACTIVE TEXT FIELD DETECTED: "
-                    f"'{field['name']}' at ({field['x']}, {field['y']}) "
-                    f"is ready for input. "
-                    f"First select all with pyautogui.hotkey('ctrl','a'), "
-                    f"then type using pyautogui.typewrite(), "
-                    f"then confirm with pyautogui.press('return')."
-                )
-                print(f"  [s{step:02d}] ENTRY_FIELD: '{field['name']}' at ({field['x']},{field['y']})")
+                # Sequential hint based on last action
+                last_act = action_str_history[-1] if action_str_history else ""
+                if "hotkey" in last_act and "ctrl" in last_act and "a" in last_act:
+                    # ctrl+a was just done → now typewrite
+                    text_input_hint = (
+                        f"TEXT FIELD '{field['name']}' is selected. "
+                        f"Now TYPE the new value: pyautogui.typewrite('NEW_VALUE', interval=0.05)"
+                    )
+                elif "typewrite" in last_act:
+                    # typewrite was just done → now press return
+                    text_input_hint = (
+                        f"Text typed. Now CONFIRM with: pyautogui.press('return')"
+                    )
+                else:
+                    # First time seeing field → select all first
+                    text_input_hint = (
+                        f"ACTIVE TEXT FIELD '{field['name']}' at ({field['x']}, {field['y']}). "
+                        f"Step 1: pyautogui.hotkey('ctrl','a') to select all. "
+                        f"Step 2: pyautogui.typewrite('NEW_VALUE', interval=0.05). "
+                        f"Step 3: pyautogui.press('return')."
+                    )
+                print(f"  [s{step:02d}] ENTRY_FIELD: '{field['name']}' → {text_input_hint[:50]}")
 
             # Direct scan: find task-keyword elements in current AT-SPI tree
             # This catches cases where APPEARED missed them (timing/AT-SPI latency)
