@@ -579,10 +579,11 @@ APP_SHORTCUTS: dict[str, list[tuple[str, list[list[str]]]]] = {
 }
 
 # Pre-emptive shortcuts: fire at step >= min_step without waiting for loop.
-# Format: (app_key, task_keyword, hotkey_sequence, min_step)
+# Format: (task_id_prefix, task_keyword, hotkey_sequence, min_step)
+# Uses task_id prefix for reliable detection (bypasses element-based detect_current_app).
 APP_SHORTCUTS_PREEMPTIVE: list[tuple[str, str, list[list[str]], int]] = [
-    ("thunderbird", "attach",     [["ctrl", "shift", "a"]], 0),
-    ("thunderbird", "attachment", [["ctrl", "shift", "a"]], 0),
+    ("thunderbird/", "attach",     [["ctrl", "shift", "a"]], 0),
+    ("thunderbird/", "attachment", [["ctrl", "shift", "a"]], 0),
 ]
 
 
@@ -1476,10 +1477,10 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
 
         # Pre-emptive shortcuts: fire at step >= min_step for known high-confidence patterns
         if not shortcut_queue and shortcut_cooldown == 0 and a11y_only:
-            current_app_p = detect_current_app(elements)
-            for p_app, p_kw, p_seq, p_min in APP_SHORTCUTS_PREEMPTIVE:
-                if (agent_step >= p_min and current_app_p == p_app and p_kw in task_kw
-                        and p_kw not in shortcut_fired_labels):
+            for p_prefix, p_kw, p_seq, p_min in APP_SHORTCUTS_PREEMPTIVE:
+                p_app = p_prefix.rstrip("/")
+                if (agent_step >= p_min and task_id.startswith(p_prefix)
+                        and p_kw in task_kw and p_kw not in shortcut_fired_labels):
                     shortcut_queue.append(["__wmctrl_hotkey__", p_app] + p_seq[0])
                     for s in p_seq[1:]:
                         shortcut_queue.append(s)
