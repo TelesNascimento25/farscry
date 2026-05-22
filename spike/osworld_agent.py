@@ -856,26 +856,43 @@ def vl_call(screenshot_path: str, task: str, history: list,
             {"role": "assistant", "content": "Thought:"},
         ]
 
-    r = requests.post(f"{VL_SERVER}/v1/chat/completions",
-                      json={"model": VL_MODEL, "messages": messages,
-                            "max_tokens": 256, "temperature": temperature},
-                      timeout=(10, 60))
-    r.raise_for_status()
-    raw = r.json()["choices"][0]["message"]["content"].strip()
-    # Prefilled with "Thought:" (visual) or "Action:" (no_image)
-    # Extract the Action: line for parsing
-    if "Action:" in raw:
-        for line in raw.split("\n"):
-            if line.strip().startswith("Action:"):
-                return line.strip()[len("Action:"):].strip()
-    # Fallback: if model produced prose with a start_box inside, extract it
-    if "start_box=" in raw:
-        # grab the first line containing start_box
-        for line in raw.split("\n"):
-            if "start_box=" in line:
-                return line.strip()
-    # no_image mode or unrecognized format: return first line as-is
-    return raw.splitlines()[0].strip() if raw else raw
+    def _call(msgs, max_tok=256):
+        resp = requests.post(f"{VL_SERVER}/v1/chat/completions",
+                             json={"model": VL_MODEL, "messages": msgs,
+                                   "max_tokens": max_tok, "temperature": temperature},
+                             timeout=(10, 60))
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"].strip()
+
+    def _extract(text):
+        if "Action:" in text:
+            for line in text.split("\n"):
+                if line.strip().startswith("Action:"):
+                    return line.strip()[len("Action:"):].strip()
+        if "start_box=" in text:
+            for line in text.split("\n"):
+                if "start_box=" in line:
+                    return line.strip()
+        return text.splitlines()[0].strip() if text else text
+
+    raw = _call(messages)
+    result = _extract(raw)
+
+    # If visual mode returned prose without an action, retry with direct prompt
+    if not no_image and "start_box=" not in result and "pyautogui." not in result:
+        retry_msgs = [
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encode(screenshot_path)}"}},
+                {"type": "text", "text": text_content + "\nRespond with ONLY the action, no explanation."},
+            ]},
+            {"role": "assistant", "content": "Action:"},
+        ]
+        raw2 = _call(retry_msgs, max_tok=64)
+        result2 = _extract(raw2)
+        if "start_box=" in result2 or "pyautogui." in result2:
+            return result2
+
+    return result
 
 
 def farscry_state(screenshot_path: str) -> tuple[str, str]:
