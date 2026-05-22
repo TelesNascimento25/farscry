@@ -579,7 +579,7 @@ APP_SHORTCUTS: dict[str, list[tuple[str, list[list[str]]]]] = {
 
 def detect_current_app(elements: list[dict]) -> str:
     names = " ".join(e["name"].lower() for e in elements)
-    if "visual studio code" in names or "vscode" in names or "open folder" in names or "welcome" in names:
+    if "visual studio code" in names or "vscode" in names or "open folder" in names:
         return "vs_code"
     if "writer" in names or ("libreoffice" in names and "calc" not in names and "impress" not in names):
         return "libreoffice_writer"
@@ -1157,8 +1157,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
     micro_loop_count = 0
     submenu_context: str = ""
     tried_names: set[str] = set()  # init here to avoid NameError in augmented mode
-    shortcut_queue: list[list[str]] = []   # pending hotkeys to fire in sequence (Level 3)
-    shortcut_fired_for: str = ""           # action key that triggered current shortcut sequence
+    shortcut_queue: list[list[str]] = []      # pending hotkeys to fire in sequence (Level 3)
+    shortcut_fired_labels: set[str] = set()   # all action labels already triggered this task
+    shortcut_cooldown: int = 0                # steps to wait before next shortcut trigger
 
     obs = env.reset(task_config=task_config)
 
@@ -1455,15 +1456,18 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         # Level 3: keyboard shortcut auto-trigger
         # Fires when model is stuck (micro_loop_count >= 1) and app+task match a shortcut.
         # Each call fires one hotkey from the sequence; queue persists across steps.
-        if not shortcut_queue and micro_loop_count >= 1 and a11y_only:
+        if shortcut_cooldown > 0:
+            shortcut_cooldown -= 1
+        if not shortcut_queue and micro_loop_count >= 1 and shortcut_cooldown == 0 and a11y_only:
             current_app = detect_current_app(elements if a11y_only else [])
             if current_app and current_app in APP_SHORTCUTS:
                 for action_label, hotkey_seq in APP_SHORTCUTS[current_app]:
-                    if action_label != shortcut_fired_for and hotkey_seq and any(
+                    if action_label not in shortcut_fired_labels and hotkey_seq and any(
                         kw in action_label for kw in task_kw
                     ):
                         shortcut_queue.extend(hotkey_seq)
-                        shortcut_fired_for = action_label
+                        shortcut_fired_labels.add(action_label)
+                        shortcut_cooldown = 3
                         print(f"  [s{step:02d}] SHORTCUT-TRIGGER: '{action_label}' → {hotkey_seq} (app={current_app})")
                         break
 
