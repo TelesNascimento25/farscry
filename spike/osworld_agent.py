@@ -839,11 +839,18 @@ def vl_call(screenshot_path: str, task: str, history: list,
     text_content = "\n".join(parts)
 
     if no_image or not screenshot_path or not os.path.exists(screenshot_path):
-        # Text-only: prefill "Action:" so model copies coords from a11y_context
-        messages = [
-            {"role": "user", "content": text_content},
-            {"role": "assistant", "content": "Action:"},
-        ]
+        # Text-only: model copies coords from a11y_context
+        if VL_MODEL_TYPE == "qwen25vl":
+            messages = [
+                {"role": "system", "content": SYSTEM_AUG},
+                {"role": "user", "content": text_content},
+            ]
+        else:
+            # UI-TARS: prefill "Action:"
+            messages = [
+                {"role": "user", "content": text_content},
+                {"role": "assistant", "content": "Action:"},
+            ]
     elif VL_MODEL_TYPE == "qwen25vl":
         # Qwen2.5-VL: system prompt + image in user message
         # Model outputs pyautogui statements directly (no start_box format)
@@ -1190,7 +1197,8 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 if e.get("role") in ("entry", "text", "textfield")
                 and e.get("enabled", True)
                 and e.get("name", "").lower() not in _SHELL_EXCL
-                and e.get("y", 0) > 100  # excludes all toolbars and top bars
+                and len(e.get("name", "")) > 2   # exclude single-char labels like 'e'
+                and e.get("y", 0) > 100
             ]
             text_input_hint = ""
             if entry_fields:
