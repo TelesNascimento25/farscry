@@ -1276,6 +1276,16 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 ctx_parts.append(live_ctx)
             a11y_context = "\n\n".join(ctx_parts)
 
+            if focused_els:
+                focused_str = ", ".join(
+                    f"{e['role']} '{e['name']}'"
+                    for e in focused_els[:2]
+                )
+                a11y_context = (
+                    f"FOCUSED RIGHT NOW: {focused_str}\n"
+                    f"(This element is active — interact with it)\n\n"
+                ) + a11y_context
+
             n_content = len(sem_state["content"])
             n_vals    = len(sem_state["values"])
             matched   = sum(1 for k in task_kw if any(
@@ -1283,6 +1293,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             ))
             # Text input is always a clear signal — force no_image mode
             if text_input_hint:
+                matched = max(matched, 1)
+            # Focused element is a strong signal — force no_image mode so context reaches model
+            if focused_els:
                 matched = max(matched, 1)
             print(f"  [ctx] inter={len(elements)}  content={n_content}  vals={n_vals}  matched={matched}")
 
