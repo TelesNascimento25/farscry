@@ -1211,23 +1211,19 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             if entry_fields:
                 field = entry_fields[0]
                 # Sequential hint based on last action
-                last_act = action_str_history[-1] if action_str_history else ""
-                if "hotkey" in last_act and "ctrl" in last_act and "a" in last_act:
-                    # ctrl+a done → now typewrite
-                    text_input_hint = (
-                        f"FIELD '{field['name']}' selected. "
-                        f"Now type the required value using pyautogui.typewrite()."
-                    )
-                elif "typewrite" in last_act:
+                last_act_h = action_str_history[-1] if action_str_history else ""
+                if "typewrite" in last_act_h:
                     # typewrite done → now press return
                     text_input_hint = (
-                        f"Value typed. Now press Enter: pyautogui.press('return')"
+                        f"Value typed in '{field['name']}'. "
+                        f"Confirm with: pyautogui.press('return')"
                     )
                 else:
-                    # First step → select all
+                    # Field just opened — GNOME pre-selects text, type directly
                     text_input_hint = (
-                        f"TEXT FIELD '{field['name']}' at ({field['x']}, {field['y']}) is open. "
-                        f"Select all: pyautogui.hotkey('ctrl', 'a')"
+                        f"RENAME FIELD OPEN: '{field['name']}' at ({field['x']}, {field['y']}). "
+                        f"The text is already selected. "
+                        f"Type the new name directly: pyautogui.typewrite()"
                     )
                 print(f"  [s{step:02d}] ENTRY_FIELD: '{field['name']}' → {text_input_hint[:50]}")
 
