@@ -596,7 +596,9 @@ def detect_current_app(elements: list[dict]) -> str:
         return "libreoffice_calc"
     if "impress" in names or "presentation" in names:
         return "libreoffice_impress"
-    if "thunderbird" in names or "write:" in names or "inbox" in names:
+    if ("thunderbird" in names or "write:" in names or "inbox" in names
+            or "to with one address" in names or "subject:" in names
+            or ("attach" in names and "send" in names)):
         return "thunderbird"
     if "gimp" in names or "toolbox" in names:
         return "gimp"
@@ -1212,8 +1214,8 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             elements  = parse_a11y_tree(a11y_xml) if a11y_xml else []
 
             if a11y_xml:
-                _FILE_DLG_ROLES = {"dialog", "file-chooser", "window", "frame"}
-                _FILE_DLG_KW    = {"open", "save", "file", "folder", "choose", "select", "browse"}
+                _FILE_DLG_ROLES = {"dialog", "file-chooser"}
+                _FILE_DLG_KW    = {"open", "save", "file", "attach", "folder", "browse"}
                 try:
                     _dlg_root = ET.fromstring(a11y_xml)
                     for _n in _dlg_root.iter():
