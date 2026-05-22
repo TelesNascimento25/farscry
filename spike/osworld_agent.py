@@ -1346,7 +1346,10 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             recent_strs = action_str_history[-5:]
             if len(set(recent_strs)) == 1:  # same action 5x in a row
                 micro_loop_count += 1
-                print(f"  [s{step:02d}] ACTION-LOOP: '{action_str[:40]}' repeated 5x")
+                total_escapes += 1
+                print(f"  [s{step:02d}] ACTION-LOOP: '{action_str[:40]}' repeated 5x → escape")
+                # Clear history so next escape ladder step is different
+                action_str_history.clear()
 
         coords = _parse_click_coords(action_str)
         if coords:
