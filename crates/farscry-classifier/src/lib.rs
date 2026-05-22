@@ -13,6 +13,14 @@ pub struct Classifier;
 
 impl ScreenClassifier for Classifier {
     fn classify(&self, elements: &[UiElement]) -> ScreenType {
+        let screen_w = elements
+            .iter()
+            .map(|e| e.cx + e.w / 2.0)
+            .fold(0.0_f32, f32::max);
+        let screen_h = elements
+            .iter()
+            .map(|e| e.cy + e.h / 2.0)
+            .fold(0.0_f32, f32::max);
         let regions: Vec<TextRegion> = elements
             .iter()
             .map(|e| TextRegion {
@@ -23,14 +31,17 @@ impl ScreenClassifier for Classifier {
                 h: e.h,
             })
             .collect();
-
-        screen::detect_screen_type(&regions)
+        screen::detect_screen_type_with_dims(&regions, screen_w, screen_h)
     }
 }
 
 impl ElementClassifier for Classifier {
     fn classify(&self, ocr: &farscry_core::OcrOutput) -> Vec<UiElement> {
-        let screen_type = screen::detect_screen_type(&ocr.regions);
+        let screen_type = screen::detect_screen_type_with_dims(
+            &ocr.regions,
+            ocr.width as f32,
+            ocr.height as f32,
+        );
         element::classify_elements(&ocr.regions, screen_type)
     }
 }
