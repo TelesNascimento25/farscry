@@ -1197,33 +1197,34 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
 
             # Active text field detection — tell the model, let it decide what to type
             # Only real text inputs: deep in the UI (y>100), not toolbar/taskbar elements
+            # Only role=entry and not known non-input widgets
             _SHELL_EXCL = {"activities", "applications", "overview",
-                           "new document", "open windows", "close window"}
+                           "new document", "open windows", "close window",
+                           "quit", "close", "cancel", "ok"}
             entry_fields = [
                 e for e in elements
-                if e.get("role") in ("entry", "text", "textfield")
+                if e.get("role") == "entry"   # only 'entry', not 'text'/'textfield'
                 and e.get("enabled", True)
                 and e.get("name", "").lower() not in _SHELL_EXCL
-                and len(e.get("name", "")) > 2   # exclude single-char labels like 'e'
+                and len(e.get("name", "")) > 2
                 and e.get("y", 0) > 100
             ]
             text_input_hint = ""
             if entry_fields:
                 field = entry_fields[0]
-                # Sequential hint based on last action
                 last_act_h = action_str_history[-1] if action_str_history else ""
                 if "typewrite" in last_act_h:
-                    # typewrite done → now press return
+                    # typewrite done → press return
                     text_input_hint = (
-                        f"Value typed in '{field['name']}'. "
-                        f"Confirm with: pyautogui.press('return')"
+                        f"pyautogui.press('return') — confirm what was typed."
                     )
                 else:
-                    # Field just opened — GNOME pre-selects text, type directly
+                    # Entry field open — hint must NOT contain the text to type
+                    # (model will literally typewrite the hint text otherwise)
                     text_input_hint = (
-                        f"RENAME FIELD OPEN: '{field['name']}' at ({field['x']}, {field['y']}). "
-                        f"The text is already selected. "
-                        f"Type the new name directly: pyautogui.typewrite()"
+                        f"editable field '{field['name']}' is open at "
+                        f"({field['x']}, {field['y']}). "
+                        f"use pyautogui.typewrite() with the value from the task."
                     )
                 print(f"  [s{step:02d}] ENTRY_FIELD: '{field['name']}' → {text_input_hint[:50]}")
 
