@@ -868,8 +868,14 @@ def vl_call(screenshot_path: str, task: str, history: list,
         for line in raw.split("\n"):
             if line.strip().startswith("Action:"):
                 return line.strip()[len("Action:"):].strip()
-    # no_image mode: response IS the action (direct completion after "Action:" prefill)
-    return raw
+    # Fallback: if model produced prose with a start_box inside, extract it
+    if "start_box=" in raw:
+        # grab the first line containing start_box
+        for line in raw.split("\n"):
+            if "start_box=" in line:
+                return line.strip()
+    # no_image mode or unrecognized format: return first line as-is
+    return raw.splitlines()[0].strip() if raw else raw
 
 
 def farscry_state(screenshot_path: str) -> tuple[str, str]:
@@ -922,9 +928,9 @@ def action_to_pyautogui(raw: str, no_image: bool = False) -> str | None:
                 x = round(rx / 1000 * VL_SCREEN_W)
                 y = round(ry / 1000 * VL_SCREEN_H)
             raw_l = raw.lower()
-            if raw_l.startswith("rightclick") or raw_l.startswith("right_click") or raw_l.startswith("right click"):
+            if any(raw_l.startswith(p) for p in ("rightclick", "right_click", "right click", "right-click")):
                 return f"pyautogui.rightClick({x}, {y})"
-            if raw_l.startswith("doubleclick") or raw_l.startswith("double_click") or raw_l.startswith("double click"):
+            if any(raw_l.startswith(p) for p in ("doubleclick", "double_click", "double click", "double-click")):
                 return f"pyautogui.doubleClick({x}, {y})"
             return f"pyautogui.click({x}, {y})"
         return None
@@ -1147,13 +1153,15 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 print(f"  [s{step:02d}] precond: {precond[:70]}")
 
             # Active text field detection — tell the model, let it decide what to type
-            _SHELL_EXCL = {"activities", "applications", "overview"}
+            # Only real text inputs: deep in the UI (y>100), not toolbar/taskbar elements
+            _SHELL_EXCL = {"activities", "applications", "overview",
+                           "new document", "open windows", "close window"}
             entry_fields = [
                 e for e in elements
                 if e.get("role") in ("entry", "text", "textfield")
                 and e.get("enabled", True)
                 and e.get("name", "").lower() not in _SHELL_EXCL
-                and e.get("y", 0) > 30
+                and e.get("y", 0) > 100  # excludes all toolbars and top bars
             ]
             text_input_hint = ""
             if entry_fields:
