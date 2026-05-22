@@ -1126,12 +1126,30 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
 
         a11y_context = ""
         sf_feedback = ""
+        file_dialog_open = False
 
         if a11y_only:
             a11y_xml = obs.get("accessibility_tree") if obs else None
             task_kw  = extract_keywords(task_instr)
 
             elements  = parse_a11y_tree(a11y_xml) if a11y_xml else []
+
+            if a11y_xml:
+                _FILE_DLG_ROLES = {"dialog", "file-chooser", "window", "frame"}
+                _FILE_DLG_KW    = {"open", "save", "file", "folder", "choose", "select", "browse"}
+                try:
+                    _dlg_root = ET.fromstring(a11y_xml)
+                    for _n in _dlg_root.iter():
+                        _r = (_n.tag.split("}")[-1] if "}" in _n.tag else _n.tag).lower()
+                        _nm = (_n.get("name") or "").lower()
+                        _sh = _n.get("{%s}showing" % _A11Y_STATE_NS, "false") == "true"
+                        if _sh and _r in _FILE_DLG_ROLES and any(k in _nm for k in _FILE_DLG_KW):
+                            file_dialog_open = True
+                            break
+                except ET.ParseError:
+                    pass
+            if file_dialog_open:
+                print(f"  [s{step:02d}] FILE_DIALOG detected")
             sem_state = extract_semantic_state(a11y_xml) if a11y_xml else \
                         {"interactive": [], "content": [], "values": [], "actions": {}}
 
@@ -1258,9 +1276,26 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                     )
                 )
 
+            file_dialog_hint = ""
+            if file_dialog_open:
+                _paths = _re.findall(r'/[\w./~-]+', task_instr)
+                if _paths:
+                    file_dialog_hint = (
+                        f"FILE DIALOG IS OPEN.\n"
+                        f"Type the path directly: pyautogui.typewrite('{_paths[0]}')\n"
+                        f"Then press return to confirm."
+                    )
+                else:
+                    file_dialog_hint = (
+                        "FILE DIALOG IS OPEN.\n"
+                        "Type the required path using pyautogui.typewrite(), then press return."
+                    )
+
             ctx_parts = []
-            # text_input_hint has highest priority — overrides everything
-            if text_input_hint:
+            # file_dialog_hint overrides everything — model must type path directly
+            if file_dialog_hint:
+                ctx_parts.append(file_dialog_hint)
+            elif text_input_hint:
                 ctx_parts.append(text_input_hint)
             elif appeared_signal:
                 ctx_parts.append(appeared_signal)
@@ -1270,9 +1305,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 ctx_parts.append(untried_signal)
             if precond:
                 ctx_parts.append(precond)
-            if submenu_context and not appeared_signal and not direct_hint and not text_input_hint:
+            if submenu_context and not appeared_signal and not direct_hint and not text_input_hint and not file_dialog_hint:
                 ctx_parts.append(submenu_context)
-            if live_ctx and not text_input_hint:
+            if live_ctx and not text_input_hint and not file_dialog_hint:
                 ctx_parts.append(live_ctx)
             a11y_context = "\n\n".join(ctx_parts)
 
@@ -1295,6 +1330,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 matched = max(matched, 1)
             # Focused element is a strong signal — force no_image mode so context reaches model
             if focused_els:
+                matched = max(matched, 1)
+            # File dialog open — force no_image mode so path hint reaches model
+            if file_dialog_open:
                 matched = max(matched, 1)
             print(f"  [ctx] inter={len(elements)}  content={n_content}  vals={n_vals}  matched={matched}")
 
@@ -1421,7 +1459,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
 
         # Track all actions (for non-coord loops like repeated hotkeys)
         action_str_history.append(action_str)
-        if len(action_str_history) >= 5:
+        if len(action_str_history) >= 5 and not file_dialog_open:
             recent_strs = action_str_history[-5:]
             if len(set(recent_strs)) == 1:  # same action 5x in a row
                 micro_loop_count += 1
@@ -1433,7 +1471,7 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         coords = _parse_click_coords(action_str)
         if coords:
             action_coord_history.append(coords)
-            if len(action_coord_history) >= 6:
+            if len(action_coord_history) >= 6 and not file_dialog_open:
                 recent = action_coord_history[-6:]
                 buckets = {(round(x / 10) * 10, round(y / 10) * 10) for x, y in recent}
                 if len(buckets) <= 3:
