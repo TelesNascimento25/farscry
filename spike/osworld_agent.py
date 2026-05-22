@@ -1333,13 +1333,14 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         last_act = action_str_history[-1] if action_str_history else ""
         prev_act = action_str_history[-2] if len(action_str_history) >= 2 else ""
         auto_clean = None
+        auto_done = False
         if entry_fields:
             if "typewrite" in last_act:
-                # typewrite just done → press return to confirm
+                # typewrite just done → press return to confirm, then stop
                 auto_clean = "pyautogui.press('return')"
-                print(f"  [s{step:02d}] AUTO: typewrite done → press return")
+                auto_done = True   # entry confirmed = task done; let evaluator judge
+                print(f"  [s{step:02d}] AUTO: typewrite done → press return + DONE")
             # Note: no auto ctrl+a — GNOME rename dialog auto-selects text on open
-            # Previous runs show typewrite directly works (no ctrl+a needed)
 
         if auto_clean:
             clean = auto_clean
@@ -1380,6 +1381,11 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         finally:
             signal.alarm(0)
         agent_step += 1
+
+        # If auto_done: entry field confirmed — stop and let evaluator judge
+        if auto_done:
+            print(f"  [s{step:02d}] AUTO_DONE: entry field confirmed, stopping")
+            done = True
 
         # Track all actions (for non-coord loops like repeated hotkeys)
         action_str_history.append(action_str)
