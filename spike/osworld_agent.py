@@ -582,8 +582,8 @@ APP_SHORTCUTS: dict[str, list[tuple[str, list[list[str]]]]] = {
 # Format: (task_id_prefix, task_keyword, hotkey_sequence, min_step)
 # Uses task_id prefix for reliable detection (bypasses element-based detect_current_app).
 APP_SHORTCUTS_PREEMPTIVE: list[tuple[str, str, list[list[str]], int]] = [
-    ("thunderbird/", "attach",     [["ctrl", "shift", "a"]], 0),
-    ("thunderbird/", "attachment", [["ctrl", "shift", "a"]], 0),
+    ("thunderbird/", "attach",     [["ctrl", "shift", "a"], ["__focus__", "Attach"]], 0),
+    ("thunderbird/", "attachment", [["ctrl", "shift", "a"], ["__focus__", "Attach"]], 0),
 ]
 
 
@@ -1363,14 +1363,13 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 if _paths:
                     file_dialog_hint = (
                         f"FILE DIALOG IS OPEN.\n"
-                        f"First press Ctrl+L to focus path bar: pyautogui.hotkey('ctrl', 'l')\n"
-                        f"Then type path: pyautogui.typewrite('{_paths[0]}')\n"
+                        f"Type the path: pyautogui.typewrite('{_paths[0]}')\n"
                         f"Then press return to confirm."
                     )
                 else:
                     file_dialog_hint = (
                         "FILE DIALOG IS OPEN.\n"
-                        "Press Ctrl+L to focus path bar, then pyautogui.typewrite(path), then return."
+                        "Type the required path using pyautogui.typewrite(), then press return."
                     )
 
             ctx_parts = []
@@ -1556,6 +1555,14 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                     f"pyautogui.hotkey({keys_str})"
                 )
                 print(f"  [s{step:02d}] SHORTCUT-WMCTRL+L3: wmctrl '{win_name}' + hotkey({keys_str})")
+            elif keys[0] == "__focus__":
+                win_name = keys[1]
+                auto_clean = (
+                    f"import subprocess; import time; "
+                    f"subprocess.run([\"wmctrl\", \"-a\", \"{win_name}\"], capture_output=True); "
+                    f"time.sleep(0.5)"
+                )
+                print(f"  [s{step:02d}] SHORTCUT-FOCUS-WIN: wmctrl '{win_name}'")
             else:
                 keys_str = ", ".join(f"'{k}'" for k in keys)
                 auto_clean = f"pyautogui.hotkey({keys_str})"
