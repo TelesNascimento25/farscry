@@ -1197,17 +1197,21 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
 
             # Active text field detection — tell the model, let it decide what to type
             # Only real text inputs: deep in the UI (y>100), not toolbar/taskbar elements
-            # Only role=entry and not known non-input widgets
+            # Text input detection: entry/text/textfield roles
+            # Exclude: known buttons/widgets by name, toolbar height, single chars
             _SHELL_EXCL = {"activities", "applications", "overview",
                            "new document", "open windows", "close window",
-                           "quit", "close", "cancel", "ok"}
+                           "quit", "close", "cancel", "ok", "yes", "no",
+                           "search", "find"}
             entry_fields = [
                 e for e in elements
-                if e.get("role") == "entry"   # only 'entry', not 'text'/'textfield'
+                if e.get("role") in ("entry", "text", "textfield")
                 and e.get("enabled", True)
                 and e.get("name", "").lower() not in _SHELL_EXCL
                 and len(e.get("name", "")) > 2
                 and e.get("y", 0) > 100
+                # Extra: exclude names that look like menu/button labels
+                and not e.get("name", "").lower().startswith(("open", "new ", "save", "view"))
             ]
             text_input_hint = ""
             if entry_fields:
