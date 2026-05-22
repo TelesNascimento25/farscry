@@ -436,12 +436,16 @@ def parse_a11y_tree(xml_str: str, max_items: int = 25) -> list[dict]:
         cx, cy = x + w // 2, y + h // 2
         enabled = node.get("{%s}enabled" % _A11Y_STATE_NS, "true") == "true"
         sensitive = node.get("{%s}sensitive" % _A11Y_STATE_NS, "true") == "true"
-        elements.append({
+        focused_flag = node.get("{%s}focused" % _A11Y_STATE_NS, "false") == "true"
+        entry = {
             "role": role, "name": name[:60],
             "x": cx, "y": cy,
             "enabled": enabled and sensitive,
             "in_modal": any(m in name for m in modal_names),
-        })
+        }
+        if focused_flag:
+            entry["focused"] = True
+        elements.append(entry)
 
         if len(elements) >= max_items * 5:
             break
@@ -1131,6 +1135,10 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             sem_state = extract_semantic_state(a11y_xml) if a11y_xml else \
                         {"interactive": [], "content": [], "values": [], "actions": {}}
 
+            focused_els = [e for e in elements if e.get("focused")]
+            if focused_els:
+                print(f"  [s{step:02d}] FOCUSED: {[(e['role'], e['name'][:30]) for e in focused_els]}")
+
             live_ctx  = semantic_state_to_context(sem_state, task_kw)
             precond   = detect_preconditions(elements, task_kw)
 
@@ -1336,10 +1344,22 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         auto_done = False
         if entry_fields:
             if "typewrite" in last_act:
-                # typewrite just done → press return to confirm, then stop
                 auto_clean = "pyautogui.press('return')"
-                auto_done = True   # entry confirmed = task done; let evaluator judge
-                print(f"  [s{step:02d}] AUTO: typewrite done → press return + DONE")
+                m_typed = _re.search(r"typewrite\('([^']+)'", last_act)
+                typed = m_typed.group(1) if m_typed else ""
+                field = entry_fields[0]
+                field_sem = next(
+                    (e for e in sem_state["interactive"]
+                     if abs(e["x"] - field["x"]) < 15 and abs(e["y"] - field["y"]) < 15),
+                    None
+                )
+                field_value = (field_sem.get("value", "") if field_sem else "") or field.get("name", "")
+                value_match = bool(typed) and typed in field_value
+                if value_match:
+                    auto_done = True
+                    print(f"  [s{step:02d}] AUTO: typewrite done → press return + DONE ('{typed}'~'{field_value[:25]}')")
+                else:
+                    print(f"  [s{step:02d}] AUTO: press return (no match: '{typed[:20]}' not in '{field_value[:25]}')")
             # Note: no auto ctrl+a — GNOME rename dialog auto-selects text on open
 
         if auto_clean:
