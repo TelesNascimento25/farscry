@@ -1472,10 +1472,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                     if action_label not in shortcut_fired_labels and hotkey_seq and all(
                         word in task_kw for word in action_label.split()
                     ):
-                        if focused_els:
-                            f0 = focused_els[0]
-                            shortcut_queue.append(["__click__", str(f0["x"]), str(f0["y"])])
-                        shortcut_queue.extend(hotkey_seq)
+                        shortcut_queue.append(["__wmctrl_hotkey__", current_app] + hotkey_seq[0])
+                        for seq in hotkey_seq[1:]:
+                            shortcut_queue.append(seq)
                         shortcut_fired_labels.add(action_label)
                         shortcut_cooldown = 3
                         print(f"  [s{step:02d}] SHORTCUT-TRIGGER: '{action_label}' → {hotkey_seq} (app={current_app})")
@@ -1509,9 +1508,24 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
 
         if shortcut_queue:
             keys = shortcut_queue.pop(0)
-            if keys[0] == "__click__":
-                auto_clean = f"pyautogui.click({keys[1]}, {keys[2]})"
-                print(f"  [s{step:02d}] SHORTCUT-FOCUS: {auto_clean}")
+            if keys[0] == "__wmctrl_hotkey__":
+                app_name_map = {
+                    "vs_code": "Visual Studio Code",
+                    "libreoffice_writer": "LibreOffice Writer",
+                    "libreoffice_calc": "LibreOffice Calc",
+                    "thunderbird": "Thunderbird",
+                    "gimp": "GIMP",
+                }
+                win_name = app_name_map.get(keys[1], keys[1])
+                hotkey_keys = keys[2:]
+                keys_str = ", ".join(f"'{k}'" for k in hotkey_keys)
+                auto_clean = (
+                    f"import subprocess; import time; "
+                    f"subprocess.run([\"wmctrl\", \"-a\", \"{win_name}\"], capture_output=True); "
+                    f"time.sleep(0.3); "
+                    f"pyautogui.hotkey({keys_str})"
+                )
+                print(f"  [s{step:02d}] SHORTCUT-WMCTRL+L3: wmctrl '{win_name}' + hotkey({keys_str})")
             else:
                 keys_str = ", ".join(f"'{k}'" for k in keys)
                 auto_clean = f"pyautogui.hotkey({keys_str})"
