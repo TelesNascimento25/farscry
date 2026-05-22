@@ -475,20 +475,25 @@ def parse_a11y_tree(xml_str: str, max_items: int = 25) -> list[dict]:
 APP_CONTEXT = {
     "libreoffice_writer": """\
 LibreOffice Writer — common operations:
+- Select all text: Ctrl+A
 - Change text color: select text → Format → Character → Font Effects → Font Color
-- Select all: Ctrl+A. Select word: double-click. Select line: triple-click.
-- Find & Replace: Ctrl+H (supports regex for bulk changes)
-- Run macro for bulk ops: Tools → Macros → Organize Basic Macros
+- Strikethrough on selected text: Format → Character → Font Effects → Strikethrough → Single
+- Select last paragraph: Ctrl+End (go to end), then Ctrl+Shift+Up (extend selection to paragraph start)
+- Find & Replace: Ctrl+H (supports regex for bulk changes; use Other Options for format changes)
+- Word-by-word formatting (vowel task): Tools → Macros → Organize Basic Macros → run macro
 - Bold/Italic/Underline: Ctrl+B / Ctrl+I / Ctrl+U
 - Save: Ctrl+S. Save as: Ctrl+Shift+S.""",
 
     "libreoffice_calc": """\
 LibreOffice Calc — common operations:
+- Enter formula in cell: click cell → type = then formula → press Enter
+- Time value multiplication: if cell A1 is time (HH:MM), multiply as =A1*24*B1 to get hours×rate
+- Navigate to cell: click cell directly, or use Name Box (top left) type cell address
 - Format cell: right-click → Format Cells
-- Enter formula: click cell → type = then formula (e.g. =SUM(A1:A10))
 - Select range: click first cell → Shift+click last
 - Sort: select range → Data → Sort
 - AutoFill: drag bottom-right corner of cell
+- Pivot Table: select data → Insert → Pivot Table → New Sheet
 - Save: Ctrl+S.""",
 
     "libreoffice_impress": """\
@@ -501,23 +506,24 @@ LibreOffice Impress — common operations:
 - Save: Ctrl+S.""",
 
     "vs_code": """\
-VS Code — common operations:
+VS Code — NOTE: Ctrl+Shift+P (Command Palette) does NOT work in this QEMU/Xvfb headless environment.
+Keyboard shortcuts are environment-limited. Use menu navigation instead.
 - Open file: Ctrl+P → type filename
-- Open folder: File → Open Folder (or drag folder)
-- Command palette: Ctrl+Shift+P
+- Settings: Ctrl+comma
 - Integrated terminal: Ctrl+backtick
 - Find in files: Ctrl+Shift+F
-- Go to line: Ctrl+G
-- Add to workspace: drag folder to explorer panel.""",
+- Add folder to workspace: File menu → Add Folder to Workspace""",
 
     "thunderbird": """\
 Thunderbird — common operations:
+- Attach file to compose: Ctrl+Shift+A (opens file dialog, then type full path and press Enter)
+- Attach button: click "Attach" button in toolbar, then navigate to file
 - Compose new email: Ctrl+N or click Write
 - Reply: Ctrl+R. Forward: Ctrl+L.
-- Attach file: Attach button or Insert → Attachment
+- Star/unstar email: press S key when email is selected
+- Select all emails in folder: Ctrl+A, then press S to star all
 - Create folder: right-click account/folder → New Folder
-- Mark as read/unread: M key
-- Search emails: Ctrl+K.""",
+- Mark as read/unread: M key""",
 
     "gimp": """\
 GIMP — common operations:
@@ -541,32 +547,28 @@ APP_SHORTCUTS: dict[str, list[tuple[str, list[list[str]]]]] = {
         ("terminal",      [["ctrl", "grave"]]),
     ],
     "libreoffice_writer": [
-        ("color",         [["ctrl", "a"], ["ctrl", "m"]]),
-        ("font",          [["ctrl", "a"]]),
+        ("strike",        [["ctrl", "end"], ["ctrl", "shift", "up"]]),
+        ("vowel",         [["ctrl", "a"]]),
+        ("color",         [["ctrl", "a"]]),
         ("select all",    [["ctrl", "a"]]),
         ("replace",       [["ctrl", "h"]]),
         ("find",          [["ctrl", "f"]]),
         ("bold",          [["ctrl", "b"]]),
         ("italic",        [["ctrl", "i"]]),
         ("underline",     [["ctrl", "u"]]),
-        ("delete",        [["ctrl", "a"], ["delete"]]),
-        ("paragraph",     [["ctrl", "a"]]),
     ],
     "libreoffice_calc": [
+        ("revenue",       []),
         ("formula",       []),
         ("sort",          [["ctrl", "a"]]),
-        ("select all",    [["ctrl", "a"]]),
     ],
     "thunderbird": [
         ("attach",        [["ctrl", "shift", "a"]]),
         ("attachment",    [["ctrl", "shift", "a"]]),
+        ("star",          [["ctrl", "a"], ["s"]]),
         ("compose",       [["ctrl", "n"]]),
-        ("new email",     [["ctrl", "n"]]),
         ("reply",         [["ctrl", "r"]]),
         ("forward",       [["ctrl", "l"]]),
-        ("mark star",     [["s"]]),
-        ("star",          [["s"]]),
-        ("folder",        []),
     ],
     "gimp": [
         ("export",        [["ctrl", "shift", "e"]]),
@@ -575,6 +577,13 @@ APP_SHORTCUTS: dict[str, list[tuple[str, list[list[str]]]]] = {
         ("undo",          [["ctrl", "z"]]),
     ],
 }
+
+# Pre-emptive shortcuts: fire at step >= 1 without waiting for loop detection.
+# Format: (app_key, task_keyword, hotkey_sequence)
+APP_SHORTCUTS_PREEMPTIVE: list[tuple[str, str, list[list[str]]]] = [
+    ("thunderbird", "attach",     [["ctrl", "shift", "a"]]),
+    ("thunderbird", "attachment", [["ctrl", "shift", "a"]]),
+]
 
 
 def detect_current_app(elements: list[dict]) -> str:
@@ -1346,7 +1355,8 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
 
             file_dialog_hint = ""
             if file_dialog_open:
-                _paths = _re.findall(r'/[\w./~-]+', task_instr)
+                _paths = _re.findall(r'[~/][\w./~-]+', task_instr)
+                _paths = [p.replace("~/", "/home/user/") for p in _paths]
                 if _paths:
                     file_dialog_hint = (
                         f"FILE DIALOG IS OPEN.\n"
@@ -1447,18 +1457,34 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         print(f"  [s{step:02d}] a11y={n_elements}el  csf={consecutive_sf}  esc={total_escapes}  temp={temp:.1f}")
         # no_image=True when >=1 matched keyword: model copies absolute coords from a11y_context.
         # no_image=False (visual) only when matched=0: model uses screenshot freely.
-        if force_visual_steps > 0:
+        if force_visual_steps > 0 and not file_dialog_open:
             force_visual_steps -= 1
             use_no_image = False
             effective_ctx = ""
             print(f"  [s{step:02d}] VISUAL-FORCED (post-shortcut, {force_visual_steps} remaining)")
         else:
+            if file_dialog_open and force_visual_steps > 0:
+                force_visual_steps = 0  # file dialog hint takes priority over forced visual
             use_no_image = a11y_only and matched >= 1
             if use_no_image:
                 print(f"  [s{step:02d}] NO-IMAGE mode (matched={matched} ≥ 1)")
             # When matched=0: visual mode, no a11y_context (sidebar elements distract model).
             # When matched>=1: no_image mode with a11y_context as the only signal.
             effective_ctx = a11y_context if use_no_image else ""
+
+        # Pre-emptive shortcuts: fire at step >= 1 for known high-confidence patterns
+        if agent_step >= 1 and not shortcut_queue and shortcut_cooldown == 0 and a11y_only:
+            current_app_p = detect_current_app(elements)
+            for p_app, p_kw, p_seq in APP_SHORTCUTS_PREEMPTIVE:
+                if (current_app_p == p_app and p_kw in task_kw
+                        and p_kw not in shortcut_fired_labels):
+                    shortcut_queue.append(["__wmctrl_hotkey__", p_app] + p_seq[0])
+                    for s in p_seq[1:]:
+                        shortcut_queue.append(s)
+                    shortcut_fired_labels.add(p_kw)
+                    shortcut_cooldown = 3
+                    print(f"  [s{step:02d}] SHORTCUT-PREEMPT: '{p_kw}' for {p_app}")
+                    break
 
         # Level 3: keyboard shortcut auto-trigger
         # Fires when model is stuck (micro_loop_count >= 1) and app+task match a shortcut.
