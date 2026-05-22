@@ -1462,8 +1462,8 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             current_app = detect_current_app(elements if a11y_only else [])
             if current_app and current_app in APP_SHORTCUTS:
                 for action_label, hotkey_seq in APP_SHORTCUTS[current_app]:
-                    if action_label not in shortcut_fired_labels and hotkey_seq and any(
-                        kw in action_label for kw in task_kw
+                    if action_label not in shortcut_fired_labels and hotkey_seq and all(
+                        word in task_kw for word in action_label.split()
                     ):
                         shortcut_queue.extend(hotkey_seq)
                         shortcut_fired_labels.add(action_label)
@@ -1502,6 +1502,11 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             keys_str = ", ".join(f"'{k}'" for k in keys)
             auto_clean = f"pyautogui.hotkey({keys_str})"
             print(f"  [s{step:02d}] SHORTCUT-L3: {auto_clean}")
+            if not shortcut_queue:
+                # Last hotkey in sequence — force visual mode next step so model sees result
+                shortcut_cooldown = max(shortcut_cooldown, 2)
+                matched = 0
+                effective_ctx = ""
 
         if auto_clean:
             clean = auto_clean
