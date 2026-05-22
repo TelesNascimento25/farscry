@@ -1327,13 +1327,21 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
         # When matched>=1: no_image mode with a11y_context as the only signal.
         effective_ctx = a11y_context if use_no_image else ""
 
-        # Auto-action: if typewrite was just done and entry field exists → press return
-        # This bypasses model uncertainty about "what to do after typing"
+        # Auto-actions: deterministic state machine for text field interactions
+        # Bypasses model uncertainty for well-defined sequences
         last_act = action_str_history[-1] if action_str_history else ""
+        prev_act = action_str_history[-2] if len(action_str_history) >= 2 else ""
         auto_clean = None
-        if "typewrite" in last_act and entry_fields:
-            auto_clean = "pyautogui.press('return')"
-            print(f"  [s{step:02d}] AUTO: typewrite done → press return")
+        if entry_fields:
+            if "typewrite" in last_act:
+                # typewrite just done → press return to confirm
+                auto_clean = "pyautogui.press('return')"
+                print(f"  [s{step:02d}] AUTO: typewrite done → press return")
+            elif ("hotkey" not in last_act or "ctrl" not in last_act or
+                  ("a" not in last_act and "c" not in last_act)):
+                # Entry field visible but no ctrl+a/c yet → select all first
+                auto_clean = "pyautogui.hotkey('ctrl', 'a')"
+                print(f"  [s{step:02d}] AUTO: entry field open → ctrl+a")
 
         if auto_clean:
             clean = auto_clean
