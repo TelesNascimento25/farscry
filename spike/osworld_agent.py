@@ -244,15 +244,21 @@ def semantic_task_done(state: dict, task_keywords: list[str],
 
     return False
 
-SYSTEM_BASE = """You control a desktop. Output a single pyautogui Python statement.
+SYSTEM_BASE = """You control an Ubuntu desktop via pyautogui. Output a single pyautogui statement.
 Examples:
   pyautogui.click(850, 420)
+  pyautogui.rightClick(1800, 900)
   pyautogui.doubleClick(400, 300)
   pyautogui.typewrite('hello world', interval=0.05)
   pyautogui.hotkey('ctrl', 'c')
   pyautogui.scroll(800, 500, clicks=3)
   DONE
   FAIL: reason
+
+Key workflows:
+- To rename a file/folder on desktop: rightClick the icon, then click Rename
+- To open menus: click the menu bar item, then click the submenu item
+- To type in a text field: click the field first, then typewrite
 
 Output only the statement. Do not explain."""
 
