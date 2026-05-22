@@ -1560,7 +1560,8 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                 auto_clean = (
                     f"import subprocess; import time; "
                     f"subprocess.run([\"wmctrl\", \"-a\", \"{win_name}\"], capture_output=True); "
-                    f"time.sleep(0.5)"
+                    f"time.sleep(0.5); "
+                    f"pyautogui.moveTo(960, 540)"
                 )
                 print(f"  [s{step:02d}] SHORTCUT-FOCUS-WIN: wmctrl '{win_name}'")
             else:
