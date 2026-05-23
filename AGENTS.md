@@ -227,3 +227,38 @@ REGRA ABSOLUTA: só publicar quando estivermos em 70%+ de chance de impacto real
 
 4-6 semanas. Depois os labs publicam algo similar.
 NÃO publicar com corpus sintético, Qwen terminal, ou números placeholder.
+
+### REGRA CRITICA — GPU Safety (Mai 22 2026 crash)
+
+**Post-mortem:** `NV_ERR_GPU_NOT_FULL_POWER` causou kernel panic e reboot do NullPointer.
+Causa: docker stop forcou QEMU off sem limpar contexto CUDA → GPU entrou em P8 → vLLM
+tentou inicializar → driver lockup → kernel panic.
+
+**NUNCA fazer:**
+```bash
+# PROIBIDO — mata processo sem esperar GPU liberar
+pkill -KILL -f vllm
+pkill -9 -f vllm
+docker kill <container>
+```
+
+**SEMPRE usar:**
+```bash
+# Parar vLLM graciosamente
+pkill -TERM -f vllm && sleep 10
+
+# Parar containers graciosamente
+docker stop <container> && sleep 5
+
+# Verificar GPU antes de qualquer run
+bash /home/teles/farscry/spike/run_osworld.sh  # tem health check built-in
+```
+
+**O `run_osworld.sh` agora verifica automaticamente:**
+1. nvidia-smi responde
+2. GPU nao esta em P8/P12 (low power)
+3. VRAM >= 8GB livres
+4. vLLM responde em /health (timeout 10s)
+5. Para containers restantes graciosamente antes de iniciar
+
+Se qualquer check falhar → script aborta com mensagem clara.
