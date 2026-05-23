@@ -485,17 +485,20 @@ def parse_a11y_tree(xml_str: str, max_items: int = 25) -> list[dict]:
             continue
 
         cx, cy = x + w // 2, y + h // 2
-        enabled = node.get("{%s}enabled" % _A11Y_STATE_NS, "true") == "true"
-        sensitive = node.get("{%s}sensitive" % _A11Y_STATE_NS, "true") == "true"
+        enabled   = node.get("{%s}enabled"   % _A11Y_STATE_NS, "true")  == "true"
+        sensitive = node.get("{%s}sensitive" % _A11Y_STATE_NS, "true")  == "true"
         focused_flag = node.get("{%s}focused" % _A11Y_STATE_NS, "false") == "true"
+        editable_flag = node.get("{%s}editable" % _A11Y_STATE_NS, "false") == "true"
         entry = {
             "role": role, "name": name[:60],
-            "x": cx, "y": cy,
+            "x": cx, "y": cy, "h": h,
             "enabled": enabled and sensitive,
             "in_modal": any(m in name for m in modal_names),
         }
         if focused_flag:
             entry["focused"] = True
+        if editable_flag:
+            entry["editable"] = True
         elements.append(entry)
 
         if len(elements) >= max_items * 5:
@@ -1382,23 +1385,23 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             if precond:
                 print(f"  [s{step:02d}] precond: {precond[:70]}")
 
-            # Active text field detection — tell the model, let it decide what to type
-            # Only real text inputs: deep in the UI (y>100), not toolbar/taskbar elements
-            # Text input detection: entry/text/textfield roles
-            # Exclude: known buttons/widgets by name, toolbar height, single chars
-            _SHELL_EXCL = {"activities", "applications", "overview",
-                           "new document", "open windows", "close window",
-                           "quit", "close", "cancel", "ok", "yes", "no",
-                           "search", "find"}
+            # Active text field detection — role-based, no name patterns.
+            # entry/textfield/textarea: always genuine input fields.
+            # text role: only if AT-SPI marks it editable AND height is small (<= 80px).
+            #   - rename dialog: role=text, editable=true, h~28  → YES
+            #   - LibreOffice doc body: role=text, editable=true, h~800 → NO (too tall)
+            #   - window title label: role=text, editable=false → NO
+            _ALWAYS_EDITABLE_ROLES = {"entry", "textfield", "textarea"}
             entry_fields = [
                 e for e in elements
-                if e.get("role") in ("entry", "text", "textfield")
-                and e.get("enabled", True)
-                and e.get("name", "").lower() not in _SHELL_EXCL
-                and len(e.get("name", "")) > 2
+                if e.get("enabled", True)
                 and e.get("y", 0) > 100
-                # Extra: exclude names that look like menu/button labels
-                and not e.get("name", "").lower().startswith(("open", "new ", "save", "view"))
+                and (
+                    e.get("role") in _ALWAYS_EDITABLE_ROLES
+                    or (e.get("role") == "text"
+                        and e.get("editable", False)
+                        and e.get("h", 999) <= 80)
+                )
             ]
             text_input_hint = ""
             if entry_fields:
@@ -1500,6 +1503,17 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             # AT-SPI deep search: when top-25 elements have no keyword match,
             # search the full tree (4870+ nodes) for any element containing task keywords.
             # Finds elements like Thunderbird "Bills" folder, deep menu items, etc.
+            # Only forces NO-IMAGE when the found elements are genuinely interactive
+            # (button, tree-item, menuitem, etc.). Document/frame titles do NOT force it —
+            # the model needs the screenshot to navigate the content.
+            _ATSPI_INTERACTIVE = {
+                "button", "push-button", "toggle-button",
+                "menu", "menuitem", "menu-item",
+                "tree-item", "list-item", "table-row",
+                "check-box", "radio-button",
+                "entry", "textfield", "textarea",
+                "link",
+            }
             if matched == 0 and a11y_xml:
                 atspi_hits = query_a11y_by_name(a11y_xml, task_kw, limit=3)
                 if atspi_hits:
@@ -1510,7 +1524,9 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
                         )
                     atspi_hint = "\n".join(lines)
                     a11y_context = atspi_hint + ("\n\n" + a11y_context if a11y_context else "")
-                    matched = 1
+                    interactive_hits = [h for h in atspi_hits if h["role"] in _ATSPI_INTERACTIVE]
+                    if interactive_hits:
+                        matched = 1
                     print(f"  [s{step:02d}] ATSPI-DEEP: {[h['name'][:25] for h in atspi_hits]}")
 
             print(f"  [ctx] inter={len(elements)}  content={n_content}  vals={n_vals}  matched={matched}")
