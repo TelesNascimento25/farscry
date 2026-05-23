@@ -389,6 +389,57 @@ def parse_focused_subtree(xml_str: str) -> list[dict]:
     return results
 
 
+def query_a11y_by_name(xml_str: str, keywords: list[str], limit: int = 5) -> list[dict]:
+    """
+    Deep AT-SPI search across all nodes (not just top-25).
+    Searches 4870+ nodes for any element whose name contains a keyword.
+    Returns elements with exact coordinates — direct grounding, no OCR needed.
+    """
+    if not xml_str or not keywords:
+        return []
+    try:
+        root = ET.fromstring(xml_str)
+    except ET.ParseError:
+        return []
+
+    kw_lower = [k.lower() for k in keywords if len(k) > 2]
+    results: list[dict] = []
+    seen_names: set[str] = set()
+
+    for node in root.iter():
+        if len(results) >= limit:
+            break
+        showing = node.get("{%s}showing" % _A11Y_STATE_NS, "false") == "true"
+        if not showing:
+            continue
+        name = (node.get("name") or node.text or "").strip()
+        if not name or name in seen_names:
+            continue
+        name_lower = name.lower()
+        if not any(kw in name_lower for kw in kw_lower):
+            continue
+        coord_str = node.get("{%s}screencoord" % _A11Y_COMP_NS, "")
+        size_str  = node.get("{%s}size" % _A11Y_COMP_NS, "")
+        if not coord_str or not size_str:
+            continue
+        try:
+            x, y = map(int, _re.findall(r"-?\d+", coord_str)[:2])
+            w, h = map(int, _re.findall(r"-?\d+", size_str)[:2])
+        except (ValueError, IndexError):
+            continue
+        if x < 0 or y < 0 or w <= 0 or h <= 0:
+            continue
+        role = (node.tag.split("}")[-1] if "}" in node.tag else node.tag).lower()
+        results.append({
+            "role": role,
+            "name": name[:60],
+            "x": x + w // 2,
+            "y": y + h // 2,
+        })
+        seen_names.add(name)
+    return results
+
+
 def parse_a11y_tree(xml_str: str, max_items: int = 25) -> list[dict]:
     if not xml_str:
         return []
@@ -1445,6 +1496,23 @@ def run_task(env, task_id: str, task_instr: str, task_config: dict,
             # File dialog open — force no_image mode so path hint reaches model
             if file_dialog_open:
                 matched = max(matched, 1)
+
+            # AT-SPI deep search: when top-25 elements have no keyword match,
+            # search the full tree (4870+ nodes) for any element containing task keywords.
+            # Finds elements like Thunderbird "Bills" folder, deep menu items, etc.
+            if matched == 0 and a11y_xml:
+                atspi_hits = query_a11y_by_name(a11y_xml, task_kw, limit=3)
+                if atspi_hits:
+                    lines = ["FOUND via AT-SPI (full tree search):"]
+                    for h in atspi_hits:
+                        lines.append(
+                            f"  {h['role']} '{h['name']}' → pyautogui.click({h['x']}, {h['y']})"
+                        )
+                    atspi_hint = "\n".join(lines)
+                    a11y_context = atspi_hint + ("\n\n" + a11y_context if a11y_context else "")
+                    matched = 1
+                    print(f"  [s{step:02d}] ATSPI-DEEP: {[h['name'][:25] for h in atspi_hits]}")
+
             print(f"  [ctx] inter={len(elements)}  content={n_content}  vals={n_vals}  matched={matched}")
 
         if augmented:

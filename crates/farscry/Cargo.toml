@@ -52,5 +52,6 @@ scrap = "0.5"
 cc = { version = "1", optional = false }
 
 [features]
-coreml = ["farscry-ocr/coreml"]
-a11y   = ["dep:farscry-a11y", "farscry-mcp/a11y"]
+default = ["a11y"]
+coreml  = ["farscry-ocr/coreml"]
+a11y    = ["dep:farscry-a11y", "farscry-mcp/a11y"]
